@@ -1,8 +1,9 @@
 /*
- * wconsd.c
+ * wconsd.c - serial port server service for Windows NT
  *
- * Serial port server service for Windows NT
- * Copyright (C) 1998 Stephen Early <Stephen.Early@cl.cam.ac.uk>
+ * Copyright (c) 2003 Benjamin Schweizer <gopher at h07 dot org>
+ *               1998 Stephen Early <Stephen.Early@cl.cam.ac.uk>
+ *
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -22,12 +23,21 @@
 /* There doesn't appear to be any way to register parameters for the
  * service with the service control manager, so I assume I have to compile
  * configuration information in. Ick. */
+#define HEADER "\fwconsd 0.1                                                  a serial port server\r\n\n\n"
+#define HELP "available commands:\r\n\n  port, speed, data, parity, stop\r\n  help, status, copyright\r\n  open, close, autoclose\r\n\n\n\n\n\n\n\n\n\n\n\n\n\n"
+
 #define PORT 9600
-#define COMPORT "\\\\.\\COM1"
-#define PORTSPEED 9600
+
+#define COMPORT    1
+#define PORTSPEED  9600
+#define PORTDATA   8
+#define PORTPARITY NOPARITY
+#define PORTSTOP   ONESTOPBIT
+#define PORTAUTOCLOSE TRUE
 
 /* Size of buffers for send and receive */
 #define BUFSIZE 1024
+#define MAXLEN 1024
 
 /* End of user-serviceable parts */
 
@@ -36,6 +46,7 @@
 #include <winsock2.h>
 #include <windows.h>
 #include <stdio.h>
+#include <stdlib.h>
 
 /* Sockets for listening and communicating */
 SOCKET ls=INVALID_SOCKET,cs=INVALID_SOCKET;
@@ -49,6 +60,13 @@ WSAEVENT listenSocketEvent;
 HANDLE hCom;
 DCB dcb;
 COMMTIMEOUTS timeouts;
+int   com_port=COMPORT;
+DWORD com_speed=PORTSPEED;
+BYTE  com_data=PORTDATA;
+BYTE  com_parity=PORTPARITY;
+BYTE  com_stop=PORTSTOP;
+BOOL  com_autoclose=PORTAUTOCLOSE;
+BOOL  com_state=FALSE; // FALSE=closed,TRUE=open
 
 /* Service status: our current status, and handle on service manager */
 SERVICE_STATUS wconsd_status;
@@ -65,6 +83,71 @@ VOID SvcDebugOut(LPSTR String, DWORD Status)
 		OutputDebugStringA(Buffer);
 	}
 }
+
+/* open the com port */
+DWORD open_com_port(DWORD *specificError) {
+	/* Open the COM port */
+	char portstr[12];
+	sprintf(portstr, "\\\\.\\COM%d", com_port);
+	hCom = CreateFile(portstr,
+		GENERIC_READ | GENERIC_WRITE,
+		0, // Exclusive access
+		NULL,
+		OPEN_EXISTING,
+		FILE_FLAG_OVERLAPPED,
+		NULL);
+	if (hCom == INVALID_HANDLE_VALUE) {
+		*specificError=GetLastError();
+		return 13;
+	}
+
+	if (!GetCommState(hCom, &dcb)) {
+		*specificError=GetLastError();
+		return 14;
+	}
+
+	// Fill in the device control block
+	dcb.BaudRate=com_speed;
+	dcb.ByteSize=com_data;
+	dcb.Parity=com_parity;		// NOPARITY, ODDPARITY, EVENPARITY
+	dcb.StopBits=com_stop;		// ONESTOPBIT, ONE5STOPBITS, TWOSTOPBITS
+	dcb.fBinary=TRUE;
+	dcb.fOutxCtsFlow=FALSE;
+	dcb.fOutxDsrFlow=FALSE;
+	dcb.fDtrControl=DTR_CONTROL_ENABLE; // Always on
+	dcb.fDsrSensitivity=FALSE;
+	dcb.fTXContinueOnXoff=FALSE;
+	dcb.fOutX=FALSE;
+	dcb.fInX=FALSE;
+	dcb.fErrorChar=FALSE;
+	dcb.fNull=FALSE;
+	dcb.fRtsControl=RTS_CONTROL_ENABLE; // Always on
+	dcb.fAbortOnError=FALSE;
+
+	if (!SetCommState(hCom, &dcb)) {
+		*specificError=GetLastError();
+		return 15;
+	}
+
+	timeouts.ReadIntervalTimeout=20;
+	timeouts.ReadTotalTimeoutMultiplier=0;
+	timeouts.ReadTotalTimeoutConstant=50;
+	timeouts.WriteTotalTimeoutMultiplier=0;
+	timeouts.WriteTotalTimeoutConstant=0;
+	if (!SetCommTimeouts(hCom, &timeouts)) {
+		*specificError=GetLastError();
+		return 16;
+	}
+	com_state=TRUE;
+	return 0;
+}
+
+/* close the com port */
+void close_com_port() {
+	CloseHandle(hCom);
+	com_state=FALSE;
+}
+
 
 /* Initialise wconsd: open a listening socket and the COM port, and
  * create lots of event objects. */
@@ -160,58 +243,6 @@ DWORD wconsd_init(DWORD argc, LPSTR *argv, DWORD *specificError)
 		*specificError=WSAGetLastError();
 		return 12;
 	}
-
-	/* Open the COM port */
-	hCom = CreateFile(COMPORT,
-		GENERIC_READ | GENERIC_WRITE,
-		0, // Exclusive access
-		NULL,
-		OPEN_EXISTING,
-		FILE_FLAG_OVERLAPPED,
-		NULL);
-	if (hCom == INVALID_HANDLE_VALUE) {
-		*specificError=GetLastError();
-		return 13;
-	}
-
-	if (!GetCommState(hCom, &dcb)) {
-		*specificError=GetLastError();
-		return 14;
-	}
-
-	// Fill in the device control block
-	dcb.BaudRate=PORTSPEED;
-	dcb.ByteSize=8;
-	dcb.Parity=NOPARITY;
-	dcb.StopBits=ONESTOPBIT;
-	dcb.fBinary=TRUE;
-	dcb.fOutxCtsFlow=FALSE;
-	dcb.fOutxDsrFlow=FALSE;
-	dcb.fDtrControl=DTR_CONTROL_ENABLE; // Always on
-	dcb.fDsrSensitivity=FALSE;
-	dcb.fTXContinueOnXoff=FALSE;
-	dcb.fOutX=FALSE;
-	dcb.fInX=FALSE;
-	dcb.fErrorChar=FALSE;
-	dcb.fNull=FALSE;
-	dcb.fRtsControl=RTS_CONTROL_ENABLE; // Always on
-	dcb.fAbortOnError=FALSE;
-
-	if (!SetCommState(hCom, &dcb)) {
-		*specificError=GetLastError();
-		return 15;
-	}
-
-	timeouts.ReadIntervalTimeout=20;
-	timeouts.ReadTotalTimeoutMultiplier=0;
-	timeouts.ReadTotalTimeoutConstant=50;
-	timeouts.WriteTotalTimeoutMultiplier=0;
-	timeouts.WriteTotalTimeoutConstant=0;
-	if (!SetCommTimeouts(hCom, &timeouts)) {
-		*specificError=GetLastError();
-		return 16;
-	}
-
 	return 0;
 }
 
@@ -287,6 +318,203 @@ DWORD WINAPI wconsd_com_to_net(LPVOID lpParam)
 	return 0;
 }
 
+int run_menu() {
+	/* no comment */
+	BYTE buf[BUFSIZE], msg[MAXLEN], line[MAXLEN], command[MAXLEN], parameter[MAXLEN];
+	DWORD errcode;
+	DWORD size, linelen=0;
+	char *buf2split=0, *cmdsplit=0;
+	BOOL menu=TRUE;
+	WORD i;
+
+	unsigned long zero=0;
+	
+	send(cs,HEADER,strlen(HEADER),0);
+	send(cs,HELP,strlen(HELP),0);
+	send(cs,"> ",2,0);
+	while (menu) {
+		size=recv(cs,buf,BUFSIZE,0);
+		if (size==0) {
+			SetEvent(connectionCloseEvent);
+			return 1;
+		}
+		if (size==SOCKET_ERROR) {
+			/* General paranoia about blocking sockets */
+			ioctlsocket(cs,FIONBIO,&zero);
+		}
+		if (size!=SOCKET_ERROR) {
+			for (i = 0; i < size; i++) {
+				if (buf[i] == 127) {		// backspace
+					if (linelen > 0) {
+						send(cs,"\x7f",1,0);
+						linelen--;
+					} else {
+						send(cs,"\x07",1,0); // bell
+					}
+				} else if (buf[i] == 13) {	// cr
+					send(cs,HEADER,strlen(HEADER),0);
+					line[linelen]=32; // ensure that there is
+					line[linelen+1]=0;    // at least one seperator
+					memcpy(command,line, strchr(line, 32) - line); // seperator
+					memcpy(parameter,strchr(line, 32)+1, line+linelen-strchr(line, 32)); // seperator
+					command[strchr(line, 32) - line]=0;
+					if (line+linelen-strchr(line, 32)-1 < 0) {
+						parameter[0]=0;
+					} else {
+						parameter[line+linelen-strchr(line, 32)-1]=0;
+					}
+					if (!strcmp(command, "help") || !strcmp(command, "?")) {				// help
+						send(cs,HELP,strlen(HELP),0);
+					} else if (!strcmp(command, "status")) {		// status
+						sprintf(msg, "status:\r\n\n  port=%d\r\n  speed=%d\r\n  data=%d\r\n  parity=%d\r\n  stop=%d\r\n\n", com_port, com_speed, com_data, com_parity, com_stop);
+						send(cs,msg,strlen(msg),0);
+						if(com_state) {
+							sprintf(msg, "  state=open\r\n  autoclose=%d\r\n\n\n\n\n\n\n\n\n", com_autoclose);
+						} else {
+							sprintf(msg, "  state=closed\r\n  autoclose=%d\r\n\n\n\n\n\n\n\n\n", com_autoclose);
+						}
+						send(cs,msg,strlen(msg),0);
+					} else if (!strcmp(command, "copyright")) {	// copyright
+						sprintf(msg, "  Copyright (c) 2003 by Benjamin Schweizer <gopher at h07 dot org>\r\n                1998 by Stephen Early <Stephen.Early@cl.cam.ac.uk>\r\n\r\n\r\n  This program is free software; you can redistribute it and/or modify\r\n  it under the terms of the GNU General Public License as published by\r\n  the Free Software Foundation; either version 2 of the License, or\r\n  (at your option) any later version.\r\n \r\n  This program is distributed in the hope that it will be useful,\r\n  but WITHOUT ANY WARRANTY; without even the implied warranty of\r\n  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the\r\n  GNU General Public License for more details.\r\n \r\n  You should have received a copy of the GNU General Public License\r\n  along with this program; if not, write to the Free Software\r\n  Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.\r\n\n");
+						send(cs,msg,strlen(msg),0);
+
+					} else if (!strcmp(command, "port")) {		// port
+						if (atoi(parameter) >= 1 && atoi(parameter) <= 16) {
+							com_port=atoi(parameter);
+						}
+						sprintf(msg, "status:\r\n\n  port=%d\r\n  speed=%d\r\n  data=%d\r\n  parity=%d\r\n  stop=%d\r\n\n", com_port, com_speed, com_data, com_parity, com_stop);
+						send(cs,msg,strlen(msg),0);
+						if(com_state) {
+							sprintf(msg, "  state=open\r\n  autoclose=%d\r\n\n\n\n\n\n\n\n\n", com_autoclose);
+						} else {
+							sprintf(msg, "  state=closed\r\n  autoclose=%d\r\n\n\n\n\n\n\n\n\n", com_autoclose);
+						}
+						send(cs,msg,strlen(msg),0);
+					} else if (!strcmp(command, "speed")) {		// speed
+						if (atoi(parameter) > 0) {
+							com_speed=atoi(parameter);
+						}
+						sprintf(msg, "status:\r\n\n  port=%d\r\n  speed=%d\r\n  data=%d\r\n  parity=%d\r\n  stop=%d\r\n\n", com_port, com_speed, com_data, com_parity, com_stop);
+						send(cs,msg,strlen(msg),0);
+						if(com_state) {
+							sprintf(msg, "  state=open\r\n  autoclose=%d\r\n\n\n\n\n\n\n\n\n", com_autoclose);
+						} else {
+							sprintf(msg, "  state=closed\r\n  autoclose=%d\r\n\n\n\n\n\n\n\n\n", com_autoclose);
+						}
+						send(cs,msg,strlen(msg),0);
+					} else if (!strcmp(command, "data")) {		// data
+						if (!strcmp(parameter, "5")) {
+							com_data=5;
+						} else if (!strcmp(parameter, "6")) {
+							com_data=6;
+						} else if (!strcmp(parameter, "7")) {
+							com_data=7;
+						} else if (!strcmp(parameter, "8")) {
+							com_data=8;
+						}
+						sprintf(msg, "status:\r\n\n  port=%d\r\n  speed=%d\r\n  data=%d\r\n  parity=%d\r\n  stop=%d\r\n\n", com_port, com_speed, com_data, com_parity, com_stop);
+						send(cs,msg,strlen(msg),0);
+						if(com_state) {
+							sprintf(msg, "  state=open\r\n  autoclose=%d\r\n\n\n\n\n\n\n\n\n", com_autoclose);
+						} else {
+							sprintf(msg, "  state=closed\r\n  autoclose=%d\r\n\n\n\n\n\n\n\n\n", com_autoclose);
+						}
+						send(cs,msg,strlen(msg),0);
+					} else if (!strcmp(command, "parity")) {	// parity
+						if (!strcmp(parameter, "no") || !strcmp(parameter, "0")) {
+							com_parity=NOPARITY;
+						} else if (!strcmp(parameter, "even") || !strcmp(parameter, "2")) {
+							com_parity=EVENPARITY;
+						} else if (!strcmp(parameter, "odd") || !strcmp(parameter, "1")) {
+							com_parity=ODDPARITY;
+						} else if (!strcmp(parameter, "mark")) {
+							com_parity=MARKPARITY;
+						} else if (!strcmp(parameter, "space")) {
+							com_parity=SPACEPARITY;
+						}
+						sprintf(msg, "status:\r\n\n  port=%d\r\n  speed=%d\r\n  data=%d\r\n  parity=%d\r\n  stop=%d\r\n\n", com_port, com_speed, com_data, com_parity, com_stop);
+						send(cs,msg,strlen(msg),0);
+						if(com_state) {
+							sprintf(msg, "  state=open\r\n  autoclose=%d\r\n\n\n\n\n\n\n\n\n", com_autoclose);
+						} else {
+							sprintf(msg, "  state=closed\r\n  autoclose=%d\r\n\n\n\n\n\n\n\n\n", com_autoclose);
+						}
+						send(cs,msg,strlen(msg),0);
+					} else if (!strcmp(command, "stop")) {
+						if (!strcmp(parameter, "one") || !strcmp(parameter, "1")) {
+							com_stop=ONESTOPBIT;
+						} else if (!strcmp(parameter, "one5") || !strcmp(parameter, "1.5")) {
+							com_stop=ONE5STOPBITS;
+						} else if (!strcmp(parameter, "two") || !strcmp(parameter, "2")) {
+							com_stop=TWOSTOPBITS;
+						}
+						sprintf(msg, "status:\r\n\n  port=%d\r\n  speed=%d\r\n  data=%d\r\n  parity=%d\r\n  stop=%d\r\n\n", com_port, com_speed, com_data, com_parity, com_stop);
+						send(cs,msg,strlen(msg),0);
+						if(com_state) {
+							sprintf(msg, "  state=open\r\n  autoclose=%d\r\n\n\n\n\n\n\n\n\n", com_autoclose);
+						} else {
+							sprintf(msg, "  state=closed\r\n  autoclose=%d\r\n\n\n\n\n\n\n\n\n", com_autoclose);
+						}
+						send(cs,msg,strlen(msg),0);
+					} else if (!strcmp(command, "open")) {		// open
+						if (atoi(parameter) > 0) {	// optional port parameter
+							com_port=atoi(parameter);
+						}
+						if (!com_state) {
+							if (!open_com_port(&errcode)) {
+								send(cs,"\r\n\f",3,0);
+								menu=FALSE;
+								return 0;
+							} else {
+								sprintf(msg, "error:\r\n\n  can't open port.\r\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n");
+								send(cs,msg,strlen(msg),0);
+							}
+						} else {	// port ist still open
+							send(cs,"\r\n\f",3,0);
+							menu=FALSE;
+							return 0;
+						}
+					} else if (!strcmp(command, "close")) {			// close
+						close_com_port();
+						sprintf(msg, "info:\r\n\n  actual com port closed.\r\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n");
+						send(cs,msg,strlen(msg),0);
+					} else if (!strcmp(command, "autoclose")) {		// autoclose
+						if (!strcmp(parameter, "true") || !strcmp(parameter, "1") || !strcmp(parameter, "yes")) {
+							com_autoclose=TRUE;
+						} else if (!strcmp(parameter, "false") || !strcmp(parameter, "0") || !strcmp(parameter, "no")) {
+							com_autoclose=FALSE;
+						}
+						sprintf(msg, "status:\r\n\n  port=%d\r\n  speed=%d\r\n  data=%d\r\n  parity=%d\r\n  stop=%d\r\n\n", com_port, com_speed, com_data, com_parity, com_stop);
+						send(cs,msg,strlen(msg),0);
+						if(com_state) {
+							sprintf(msg, "  state=open\r\n  autoclose=%d\r\n\n\n\n\n\n\n\n\n", com_autoclose);
+						} else {
+							sprintf(msg, "  state=closed\r\n  autoclose=%d\r\n\n\n\n\n\n\n\n\n", com_autoclose);
+						}
+						send(cs,msg,strlen(msg),0);
+					} else {								// else
+							sprintf(msg, "debug:\r\n\n  command: '%s'        \r\n  parameter: '%s'        \r\n", command, parameter);
+							send(cs,msg,strlen(msg),0);
+							sprintf(msg, "\r\n\n\n\n\n\n\n\n\n\n\n\n\n\n");
+							send(cs,msg,strlen(msg),0);
+					}
+					send(cs,"> ",2,0);
+					linelen=0;
+				} else {					// other chars
+					if (linelen < MAXLEN - 1) {
+						line[linelen] = buf[i];
+						linelen++;
+						send(cs,buf+i,1,0);
+					} else {
+						send(cs,"\x07",1,0); // bell
+					}
+				}
+			}
+		}
+	}
+	return 0;
+}
+
 static void wconsd_main(void)
 {
 	HANDLE wait_array[3];
@@ -330,6 +558,7 @@ static void wconsd_main(void)
 				cs=as;
 				zero=0;
 				ioctlsocket(cs,FIONBIO,&zero);
+				run_menu();
 				PurgeComm(hCom,PURGE_RXCLEAR|PURGE_RXABORT);
 				netThread=CreateThread(NULL,0,wconsd_net_to_com,NULL,0,NULL);
 				comThread=CreateThread(NULL,0,wconsd_com_to_net,NULL,0,NULL);
@@ -350,6 +579,9 @@ static void wconsd_main(void)
 			}
 			ResetEvent(connectionCloseEvent);
 			ResetEvent(threadTermEvent);
+			if (com_autoclose) {
+				close_com_port();
+			}
 			break;
 		default:
 			run=FALSE; // Stop the service - I want to get off!
@@ -423,7 +655,7 @@ VOID WINAPI ServiceStart(DWORD argc, LPSTR *argv)
 	wconsd_status.dwServiceSpecificExitCode = 0;
 	wconsd_status.dwCheckPoint = 0;
 	wconsd_status.dwWaitHint = 0;
-	wconsd_statusHandle = RegisterServiceCtrlHandler(TEXT("wconsd"),MyServiceCtrlHandler);
+	wconsd_statusHandle = RegisterServiceCtrlHandler(TEXT("wconsd_com1[8n1,9k6] at 9600"),MyServiceCtrlHandler);
 
 	if (wconsd_statusHandle == (SERVICE_STATUS_HANDLE)0) {
 		SvcDebugOut(" [wconsd] RegisterServiceCtrlHandler failed %d\n", GetLastError());
@@ -475,7 +707,7 @@ static void RegisterService(LPSTR path)
 	schService = CreateService(
 		schSCManager,
 		TEXT("wconsd"),
-		TEXT("wconsd"),
+		TEXT("wconsd - a serial port server"),
 		SERVICE_ALL_ACCESS,
 		SERVICE_WIN32_OWN_PROCESS,
 		SERVICE_AUTO_START,
@@ -557,7 +789,7 @@ int main(int argc, char **argv)
 		printf("wconsd: running in debug mode\n");
 		r=wconsd_init(argc,argv,&err);
 		if (r!=0) {
-			printf("wconsd: debug: init failed, return code %d\n",r);
+			printf("wconsd: debug: init failed, return code %d [%s]\n",r, err);
 			return 1;
 		}
 		wconsd_main();
