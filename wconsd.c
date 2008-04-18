@@ -65,6 +65,8 @@ BOOL  com_state=FALSE; // FALSE=closed,TRUE=open
 SERVICE_STATUS wconsd_status;
 SERVICE_STATUS_HANDLE wconsd_statusHandle;
 
+int debug_mode = 0;
+
 /* 
  * output from OutputDebugStringA can be seen using sysinternals debugview
  * http://technet.microsoft.com/en-us/sysinternals/bb896647.aspx
@@ -86,10 +88,11 @@ int dprintf(unsigned char severity, const char *fmt, ...) {
 	i=vsprintf(buf,fmt,args);
 	va_end(args);
 
-	// TODO - determine if we are running as a service or not and
-	// only log via one method
-	OutputDebugStringA(buf);
-	printf("%s",buf);
+	if (debug_mode) {
+		printf("%s",buf);
+	} else {
+		OutputDebugStringA(buf);
+	}
 
 	return i;
 }
@@ -667,7 +670,7 @@ VOID WINAPI ServiceStart(DWORD argc, LPSTR *argv)
 	wconsd_status.dwServiceSpecificExitCode = 0;
 	wconsd_status.dwCheckPoint = 0;
 	wconsd_status.dwWaitHint = 0;
-	wconsd_statusHandle = RegisterServiceCtrlHandler(TEXT("wconsd_com1[8n1,9k6] at 9600"),MyServiceCtrlHandler);
+	wconsd_statusHandle = RegisterServiceCtrlHandler(TEXT("wconsd"),MyServiceCtrlHandler);
 
 	if (wconsd_statusHandle == (SERVICE_STATUS_HANDLE)0) {
 		dprintf(1," [wconsd] RegisterServiceCtrlHandler failed %d\n", GetLastError());
