@@ -28,9 +28,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-#define VERSION "0.1.1"
+#define VERSION "0.1.2"
 
-#define HEADER "wconsd VERSION a serial port server\r\n\r\n"
+#define HEADER "wconsd " VERSION " a serial port server\r\n\r\n"
 #define HELP "available commands:\r\n\n  port, speed, data, parity, stop\r\n  help, status, copyright\r\n  open, close, autoclose\r\n"
 
 /* Size of buffers for send and receive */
