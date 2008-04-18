@@ -30,9 +30,6 @@
 
 #define VERSION "0.1.2"
 
-#define HEADER "wconsd " VERSION " a serial port server\r\n\r\n"
-#define HELP "available commands:\r\n\n  port, speed, data, parity, stop\r\n  help, status, copyright\r\n  open, close, autoclose\r\n"
-
 /* Size of buffers for send and receive */
 #define BUFSIZE 1024
 #define MAXLEN 1024
@@ -331,10 +328,162 @@ DWORD WINAPI wconsd_com_to_net(LPVOID lpParam)
 	return 0;
 }
 
+void send_header(SOCKET cs) {
+#define HEADER "wconsd " VERSION " a serial port server\r\n\r\n"
+	send(cs,HEADER,strlen(HEADER),0);
+}
+
+void send_help(SOCKET cs) {
+#define HELP "available commands:\r\n\n  port, speed, data, parity, stop\r\n  help, status, copyright\r\n  open, close, autoclose\r\n"
+	send(cs,HELP,strlen(HELP),0);
+}
+
+int process_menu_command(char *command, char *parameter) {
+	BYTE msg[MAXLEN];
+	DWORD errcode;
+	BOOL menu=TRUE;
+
+				if (!strcmp(command, "help") || !strcmp(command, "?")) {				// help
+					send_help(cs);
+				} else if (!strcmp(command, "status")) {		// status
+					sprintf(msg, "status:\r\n\n  port=%d  speed=%d  data=%d  parity=%d  stop=%d\r\n\n", com_port, com_speed, com_data, com_parity, com_stop);
+					send(cs,msg,strlen(msg),0);
+					if(com_state) {
+						sprintf(msg, "  state=open    autoclose=%d\r\n\n", com_autoclose);
+					} else {
+						sprintf(msg, "  state=closed  autoclose=%d\r\n\n", com_autoclose);
+					}
+					send(cs,msg,strlen(msg),0);
+				} else if (!strcmp(command, "copyright")) {	// copyright
+					sprintf(msg, "  Copyright (c) 2003 by Benjamin Schweizer <gopher at h07 dot org>\r\n                1998 by Stephen Early <Stephen.Early@cl.cam.ac.uk>\r\n\r\n\r\n  This program is free software; you can redistribute it and/or modify\r\n  it under the terms of the GNU General Public License as published by\r\n  the Free Software Foundation; either version 2 of the License, or\r\n  (at your option) any later version.\r\n \r\n  This program is distributed in the hope that it will be useful,\r\n  but WITHOUT ANY WARRANTY; without even the implied warranty of\r\n  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the\r\n  GNU General Public License for more details.\r\n \r\n  You should have received a copy of the GNU General Public License\r\n  along with this program; if not, write to the Free Software\r\n  Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.\r\n\n");
+					send(cs,msg,strlen(msg),0);
+
+				} else if (!strcmp(command, "port")) {		// port
+					if (atoi(parameter) >= 1 && atoi(parameter) <= 16) {
+						com_port=atoi(parameter);
+					}
+					sprintf(msg, "status:\r\n  port=%d  speed=%d  data=%d  parity=%d  stop=%d\r\n\n", com_port, com_speed, com_data, com_parity, com_stop);
+					send(cs,msg,strlen(msg),0);
+					if(com_state) {
+						sprintf(msg, "  state=open    autoclose=%d\r\n\n", com_autoclose);
+					} else {
+						sprintf(msg, "  state=closed  autoclose=%d\r\n\n", com_autoclose);
+					}
+					send(cs,msg,strlen(msg),0);
+				} else if (!strcmp(command, "speed")) {		// speed
+					if (atoi(parameter) > 0) {
+						com_speed=atoi(parameter);
+					}
+					sprintf(msg, "status:\r\n  port=%d  speed=%d  data=%d  parity=%d  stop=%d\r\n\n", com_port, com_speed, com_data, com_parity, com_stop);
+					send(cs,msg,strlen(msg),0);
+					if(com_state) {
+						sprintf(msg, "  state=open    autoclose=%d\r\n\n", com_autoclose);
+					} else {
+						sprintf(msg, "  state=closed  autoclose=%d\r\n\n", com_autoclose);
+					}
+					send(cs,msg,strlen(msg),0);
+				} else if (!strcmp(command, "data")) {		// data
+					if (!strcmp(parameter, "5")) {
+						com_data=5;
+					} else if (!strcmp(parameter, "6")) {
+						com_data=6;
+					} else if (!strcmp(parameter, "7")) {
+						com_data=7;
+					} else if (!strcmp(parameter, "8")) {
+						com_data=8;
+					}
+					sprintf(msg, "status:\r\n  port=%d  speed=%d  data=%d  parity=%d  stop=%d\r\n\n", com_port, com_speed, com_data, com_parity, com_stop);
+					send(cs,msg,strlen(msg),0);
+					if(com_state) {
+						sprintf(msg, "  state=open    autoclose=%d\r\n\n", com_autoclose);
+					} else {
+						sprintf(msg, "  state=closed  autoclose=%d\r\n\n", com_autoclose);
+					}
+					send(cs,msg,strlen(msg),0);
+				} else if (!strcmp(command, "parity")) {	// parity
+					if (!strcmp(parameter, "no") || !strcmp(parameter, "0")) {
+						com_parity=NOPARITY;
+					} else if (!strcmp(parameter, "even") || !strcmp(parameter, "2")) {
+						com_parity=EVENPARITY;
+					} else if (!strcmp(parameter, "odd") || !strcmp(parameter, "1")) {
+						com_parity=ODDPARITY;
+					} else if (!strcmp(parameter, "mark")) {
+						com_parity=MARKPARITY;
+					} else if (!strcmp(parameter, "space")) {
+						com_parity=SPACEPARITY;
+					}
+					sprintf(msg, "status:\r\n  port=%d  speed=%d  data=%d  parity=%d  stop=%d\r\n\n", com_port, com_speed, com_data, com_parity, com_stop);
+					send(cs,msg,strlen(msg),0);
+					if(com_state) {
+						sprintf(msg, "  state=open    autoclose=%d\r\n\n", com_autoclose);
+					} else {
+						sprintf(msg, "  state=closed  autoclose=%d\r\n\n", com_autoclose);
+					}
+					send(cs,msg,strlen(msg),0);
+				} else if (!strcmp(command, "stop")) {
+					if (!strcmp(parameter, "one") || !strcmp(parameter, "1")) {
+						com_stop=ONESTOPBIT;
+					} else if (!strcmp(parameter, "one5") || !strcmp(parameter, "1.5")) {
+						com_stop=ONE5STOPBITS;
+					} else if (!strcmp(parameter, "two") || !strcmp(parameter, "2")) {
+						com_stop=TWOSTOPBITS;
+					}
+					sprintf(msg, "status:\r\n  port=%d  speed=%d  data=%d  parity=%d  stop=%d\r\n\n", com_port, com_speed, com_data, com_parity, com_stop);
+					send(cs,msg,strlen(msg),0);
+					if(com_state) {
+						sprintf(msg, "  state=open    autoclose=%d\r\n\n", com_autoclose);
+					} else {
+						sprintf(msg, "  state=closed  autoclose=%d\r\n\n", com_autoclose);
+					}
+					send(cs,msg,strlen(msg),0);
+				} else if (!strcmp(command, "open")) {		// open
+					if (atoi(parameter) > 0) {	// optional port parameter
+						com_port=atoi(parameter);
+					}
+					if (!com_state) {
+						if (!open_com_port(&errcode)) {
+							send(cs,"\r\n\f",3,0);
+							menu=FALSE;
+							return menu;
+						} else {
+							sprintf(msg, "error:\r\n  can't open port.\r\n\n");
+							send(cs,msg,strlen(msg),0);
+						}
+					} else {	// port ist still open
+						send(cs,"\r\n\f",3,0);
+						menu=FALSE;
+						return menu;
+					}
+				} else if (!strcmp(command, "close")) {			// close
+					close_com_port();
+					sprintf(msg, "info:\r\n  actual com port closed.\r\n\n");
+					send(cs,msg,strlen(msg),0);
+				} else if (!strcmp(command, "autoclose")) {		// autoclose
+					if (!strcmp(parameter, "true") || !strcmp(parameter, "1") || !strcmp(parameter, "yes")) {
+						com_autoclose=TRUE;
+					} else if (!strcmp(parameter, "false") || !strcmp(parameter, "0") || !strcmp(parameter, "no")) {
+						com_autoclose=FALSE;
+					}
+					sprintf(msg, "status:\r\n  port=%d  speed=%d  data=%d  parity=%d  stop=%d\r\n\n", com_port, com_speed, com_data, com_parity, com_stop);
+					send(cs,msg,strlen(msg),0);
+					if(com_state) {
+						sprintf(msg, "  state=open    autoclose=%d\r\n\n", com_autoclose);
+					} else {
+						sprintf(msg, "  state=closed  autoclose=%d\r\n\n", com_autoclose);
+					}
+					send(cs,msg,strlen(msg),0);
+				} else {								// else
+						sprintf(msg, "debug:\r\n  command: '%s'  parameter: '%s'\r\n\n", command, parameter);
+						send(cs,msg,strlen(msg),0);
+						sprintf(msg, "\r\n\n");
+						send(cs,msg,strlen(msg),0);
+				}
+	return menu;
+}
+
 int run_menu() {
 	/* no comment */
 	BYTE buf[BUFSIZE], msg[MAXLEN], line[MAXLEN], command[MAXLEN], parameter[MAXLEN];
-	DWORD errcode;
 	DWORD size, linelen=0;
 	char *buf2split=0, *cmdsplit=0;
 	BOOL menu=TRUE;
@@ -342,9 +491,9 @@ int run_menu() {
 	char *linep;
 
 	unsigned long zero=0;
-	
-	send(cs,HEADER,strlen(HEADER),0);
-	send(cs,HELP,strlen(HELP),0);
+
+	send_header(cs);
+	send_help(cs);	
 	send(cs,"> ",2,0);
 	while (menu) {
 		size=recv(cs,buf,BUFSIZE,0);
@@ -355,174 +504,53 @@ int run_menu() {
 		if (size==SOCKET_ERROR) {
 			/* General paranoia about blocking sockets */
 			ioctlsocket(cs,FIONBIO,&zero);
+			continue;
 		}
-		if (size!=SOCKET_ERROR) {
-			for (i = 0; i < size; i++) {
-				if (buf[i] == 127) {		// backspace
-					if (linelen > 0) {
-						send(cs,"\x7f",1,0);
-						linelen--;
-					} else {
-						send(cs,"\x07",1,0); // bell
-					}
-				} else if (buf[i] == 13) {	// cr
-					send(cs,HEADER,strlen(HEADER),0);
-					line[linelen]=32; // ensure that there is
-					line[linelen+1]=0;    // at least one seperator
-					linep=line;
-					memcpy(command,line, strchr(linep, 32) - linep); // seperator
-					memcpy(parameter,strchr(line, 32)+1, linep+linelen-strchr(line, 32)); // seperator
-					command[strchr(line, 32) - linep]=0;
-					if (linep+linelen-strchr(line, 32)-1 < 0) {
-						parameter[0]=0;
-					} else {
-						parameter[linep+linelen-strchr(line, 32)-1]=0;
-					}
-					if (!strcmp(command, "help") || !strcmp(command, "?")) {				// help
-						send(cs,HELP,strlen(HELP),0);
-					} else if (!strcmp(command, "status")) {		// status
-						sprintf(msg, "status:\r\n\n  port=%d  speed=%d  data=%d  parity=%d  stop=%d\r\n\n", com_port, com_speed, com_data, com_parity, com_stop);
-						send(cs,msg,strlen(msg),0);
-						if(com_state) {
-							sprintf(msg, "  state=open    autoclose=%d\r\n\n", com_autoclose);
-						} else {
-							sprintf(msg, "  state=closed  autoclose=%d\r\n\n", com_autoclose);
-						}
-						send(cs,msg,strlen(msg),0);
-					} else if (!strcmp(command, "copyright")) {	// copyright
-						sprintf(msg, "  Copyright (c) 2003 by Benjamin Schweizer <gopher at h07 dot org>\r\n                1998 by Stephen Early <Stephen.Early@cl.cam.ac.uk>\r\n\r\n\r\n  This program is free software; you can redistribute it and/or modify\r\n  it under the terms of the GNU General Public License as published by\r\n  the Free Software Foundation; either version 2 of the License, or\r\n  (at your option) any later version.\r\n \r\n  This program is distributed in the hope that it will be useful,\r\n  but WITHOUT ANY WARRANTY; without even the implied warranty of\r\n  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the\r\n  GNU General Public License for more details.\r\n \r\n  You should have received a copy of the GNU General Public License\r\n  along with this program; if not, write to the Free Software\r\n  Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.\r\n\n");
-						send(cs,msg,strlen(msg),0);
 
-					} else if (!strcmp(command, "port")) {		// port
-						if (atoi(parameter) >= 1 && atoi(parameter) <= 16) {
-							com_port=atoi(parameter);
-						}
-						sprintf(msg, "status:\r\n  port=%d  speed=%d  data=%d  parity=%d  stop=%d\r\n\n", com_port, com_speed, com_data, com_parity, com_stop);
-						send(cs,msg,strlen(msg),0);
-						if(com_state) {
-							sprintf(msg, "  state=open    autoclose=%d\r\n\n", com_autoclose);
-						} else {
-							sprintf(msg, "  state=closed  autoclose=%d\r\n\n", com_autoclose);
-						}
-						send(cs,msg,strlen(msg),0);
-					} else if (!strcmp(command, "speed")) {		// speed
-						if (atoi(parameter) > 0) {
-							com_speed=atoi(parameter);
-						}
-						sprintf(msg, "status:\r\n  port=%d  speed=%d  data=%d  parity=%d  stop=%d\r\n\n", com_port, com_speed, com_data, com_parity, com_stop);
-						send(cs,msg,strlen(msg),0);
-						if(com_state) {
-							sprintf(msg, "  state=open    autoclose=%d\r\n\n", com_autoclose);
-						} else {
-							sprintf(msg, "  state=closed  autoclose=%d\r\n\n", com_autoclose);
-						}
-						send(cs,msg,strlen(msg),0);
-					} else if (!strcmp(command, "data")) {		// data
-						if (!strcmp(parameter, "5")) {
-							com_data=5;
-						} else if (!strcmp(parameter, "6")) {
-							com_data=6;
-						} else if (!strcmp(parameter, "7")) {
-							com_data=7;
-						} else if (!strcmp(parameter, "8")) {
-							com_data=8;
-						}
-						sprintf(msg, "status:\r\n  port=%d  speed=%d  data=%d  parity=%d  stop=%d\r\n\n", com_port, com_speed, com_data, com_parity, com_stop);
-						send(cs,msg,strlen(msg),0);
-						if(com_state) {
-							sprintf(msg, "  state=open    autoclose=%d\r\n\n", com_autoclose);
-						} else {
-							sprintf(msg, "  state=closed  autoclose=%d\r\n\n", com_autoclose);
-						}
-						send(cs,msg,strlen(msg),0);
-					} else if (!strcmp(command, "parity")) {	// parity
-						if (!strcmp(parameter, "no") || !strcmp(parameter, "0")) {
-							com_parity=NOPARITY;
-						} else if (!strcmp(parameter, "even") || !strcmp(parameter, "2")) {
-							com_parity=EVENPARITY;
-						} else if (!strcmp(parameter, "odd") || !strcmp(parameter, "1")) {
-							com_parity=ODDPARITY;
-						} else if (!strcmp(parameter, "mark")) {
-							com_parity=MARKPARITY;
-						} else if (!strcmp(parameter, "space")) {
-							com_parity=SPACEPARITY;
-						}
-						sprintf(msg, "status:\r\n  port=%d  speed=%d  data=%d  parity=%d  stop=%d\r\n\n", com_port, com_speed, com_data, com_parity, com_stop);
-						send(cs,msg,strlen(msg),0);
-						if(com_state) {
-							sprintf(msg, "  state=open    autoclose=%d\r\n\n", com_autoclose);
-						} else {
-							sprintf(msg, "  state=closed  autoclose=%d\r\n\n", com_autoclose);
-						}
-						send(cs,msg,strlen(msg),0);
-					} else if (!strcmp(command, "stop")) {
-						if (!strcmp(parameter, "one") || !strcmp(parameter, "1")) {
-							com_stop=ONESTOPBIT;
-						} else if (!strcmp(parameter, "one5") || !strcmp(parameter, "1.5")) {
-							com_stop=ONE5STOPBITS;
-						} else if (!strcmp(parameter, "two") || !strcmp(parameter, "2")) {
-							com_stop=TWOSTOPBITS;
-						}
-						sprintf(msg, "status:\r\n  port=%d  speed=%d  data=%d  parity=%d  stop=%d\r\n\n", com_port, com_speed, com_data, com_parity, com_stop);
-						send(cs,msg,strlen(msg),0);
-						if(com_state) {
-							sprintf(msg, "  state=open    autoclose=%d\r\n\n", com_autoclose);
-						} else {
-							sprintf(msg, "  state=closed  autoclose=%d\r\n\n", com_autoclose);
-						}
-						send(cs,msg,strlen(msg),0);
-					} else if (!strcmp(command, "open")) {		// open
-						if (atoi(parameter) > 0) {	// optional port parameter
-							com_port=atoi(parameter);
-						}
-						if (!com_state) {
-							if (!open_com_port(&errcode)) {
-								send(cs,"\r\n\f",3,0);
-								menu=FALSE;
-								return 0;
-							} else {
-								sprintf(msg, "error:\r\n  can't open port.\r\n\n");
-								send(cs,msg,strlen(msg),0);
-							}
-						} else {	// port ist still open
-							send(cs,"\r\n\f",3,0);
-							menu=FALSE;
-							return 0;
-						}
-					} else if (!strcmp(command, "close")) {			// close
-						close_com_port();
-						sprintf(msg, "info:\r\n  actual com port closed.\r\n\n");
-						send(cs,msg,strlen(msg),0);
-					} else if (!strcmp(command, "autoclose")) {		// autoclose
-						if (!strcmp(parameter, "true") || !strcmp(parameter, "1") || !strcmp(parameter, "yes")) {
-							com_autoclose=TRUE;
-						} else if (!strcmp(parameter, "false") || !strcmp(parameter, "0") || !strcmp(parameter, "no")) {
-							com_autoclose=FALSE;
-						}
-						sprintf(msg, "status:\r\n  port=%d  speed=%d  data=%d  parity=%d  stop=%d\r\n\n", com_port, com_speed, com_data, com_parity, com_stop);
-						send(cs,msg,strlen(msg),0);
-						if(com_state) {
-							sprintf(msg, "  state=open    autoclose=%d\r\n\n", com_autoclose);
-						} else {
-							sprintf(msg, "  state=closed  autoclose=%d\r\n\n", com_autoclose);
-						}
-						send(cs,msg,strlen(msg),0);
-					} else {								// else
-							sprintf(msg, "debug:\r\n  command: '%s'  parameter: '%s'\r\n\n", command, parameter);
-							send(cs,msg,strlen(msg),0);
-							sprintf(msg, "\r\n\n");
-							send(cs,msg,strlen(msg),0);
-					}
-					send(cs,"> ",2,0);
-					linelen=0;
-				} else {					// other chars
-					if (linelen < MAXLEN - 1) {
-						line[linelen] = buf[i];
-						linelen++;
-						send(cs,buf+i,1,0);
-					} else {
-						send(cs,"\x07",1,0); // bell
-					}
+		for (i = 0; i < size; i++) {
+			if (buf[i] == 127 || buf[i]==8) {	// backspace
+				if (linelen > 0) {
+					send(cs,"\x7f",1,0);
+					linelen--;
+				} else {
+					send(cs,"\x07",1,0);	// bell
+				}
+			} else if (buf[i] == 10) {
+				// ignore LF chars
+				continue;
+			} else if (buf[i] == 13) {	// cr
+				line[linelen]=' ';	// ensure that there is
+				line[linelen+1]=0;	// at least one seperator
+				linep=line;
+
+				memcpy(command,line, strchr(linep, ' ') - linep); // seperator
+				memcpy(parameter,strchr(line, ' ')+1, linep+linelen-strchr(line, ' ')); // seperator
+				command[strchr(line, ' ') - linep]=0;
+
+				if (linep+linelen-strchr(line, ' ')-1 < 0) {
+					parameter[0]=0;
+				} else {
+					parameter[linep+linelen-strchr(line, ' ')-1]=0;
+				}
+
+				menu = process_menu_command(command,parameter);
+
+				if (!menu) {
+					return 0;
+				}
+
+				send(cs,"> ",2,0);
+				linelen=0;
+			} else {
+				// other chars
+				if (linelen < MAXLEN - 1) {
+					line[linelen] = buf[i];
+					linelen++;
+					// FIXME - dont echo if the other end is in
+					// linemode
+					send(cs,&buf[i],1,0);		// echo the char
+				} else {
+					send(cs,"\x07",1,0); // bell
 				}
 			}
 		}
@@ -575,7 +603,11 @@ static void wconsd_main(void)
 				cs=as;
 				zero=0;
 				ioctlsocket(cs,FIONBIO,&zero);
+
+				// run the menu to ask the user questions
 				run_menu();
+
+				// they must have opened the com port, so start the threads
 				PurgeComm(hCom,PURGE_RXCLEAR|PURGE_RXABORT);
 				netThread=CreateThread(NULL,0,wconsd_net_to_com,NULL,0,NULL);
 				comThread=CreateThread(NULL,0,wconsd_com_to_net,NULL,0,NULL);
@@ -786,22 +818,27 @@ int main(int argc, char **argv)
 		{ NULL, NULL }
 	};
 
-	dprintf(0,"wconsd: start\n");
-
 	if (argc==1 || argc==0) {
+		// We are running from the service control manager
+		debug_mode=0;
 		if (!StartServiceCtrlDispatcher(DispatchTable)) {
 			dprintf(1,"wconsd: StartServiceCtrlDispatcher error = %d\n", GetLastError());
 		}
 		return 0;
 	}
 
+	// We are running in debug mode (or any other command-line mode)
+	debug_mode=1;
+
 	if (strcmp(argv[1],"-i")==0) {
+		// request service installation
 		if (argc!=3) {
 			usage();
 			return 1;
 		}
 		RegisterService(argv[2]);
 	} else if (strcmp(argv[1],"-r")==0) {
+		// request service removal
 		RemoveService();
 	} else if (strcmp(argv[1],"-d")==0) {
 		int r;
