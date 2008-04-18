@@ -20,6 +20,14 @@
  * Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
  */
 
+/* Note: winsock2.h MUST be included before windows.h */
+
+#include <winsock2.h>
+#include <windows.h>
+#include <winsvc.h>
+#include <stdio.h>
+#include <stdlib.h>
+
 /* There doesn't appear to be any way to register parameters for the
  * service with the service control manager, so I assume I have to compile
  * configuration information in. Ick. */
@@ -40,13 +48,6 @@
 #define MAXLEN 1024
 
 /* End of user-serviceable parts */
-
-/* Note: winsock2.h MUST be included before windows.h */
-
-#include <winsock2.h>
-#include <windows.h>
-#include <stdio.h>
-#include <stdlib.h>
 
 /* Sockets for listening and communicating */
 SOCKET ls=INVALID_SOCKET,cs=INVALID_SOCKET;
