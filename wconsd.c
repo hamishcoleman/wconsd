@@ -37,8 +37,6 @@
 #define BUFSIZE 1024
 #define MAXLEN 1024
 
-/* End of user-serviceable parts */
-
 /* Sockets for listening and communicating */
 SOCKET ls=INVALID_SOCKET,cs=INVALID_SOCKET;
 
@@ -67,19 +65,33 @@ BOOL  com_state=FALSE; // FALSE=closed,TRUE=open
 SERVICE_STATUS wconsd_status;
 SERVICE_STATUS_HANDLE wconsd_statusHandle;
 
-/* Code starts here */
-
 /* 
- * Debug output can be seen using sysinternals debugview
+ * output from OutputDebugStringA can be seen using sysinternals debugview
  * http://technet.microsoft.com/en-us/sysinternals/bb896647.aspx
  */
-VOID SvcDebugOut(LPSTR String, DWORD Status)
-{
-	CHAR Buffer[1024];
-	if (strlen(String)<1000) {
-		sprintf(Buffer, String, Status);
-		OutputDebugStringA(Buffer);
-	}
+
+/*
+ * log a debug message
+ */
+int dprintf_level = 1;
+int dprintf(unsigned char severity, const char *fmt, ...) {
+	va_list args;
+	char buf[1025];
+	int i;
+
+	if (severity > dprintf_level)
+		return 0;
+
+	va_start(args,fmt);
+	i=vsprintf(buf,fmt,args);
+	va_end(args);
+
+	// TODO - determine if we are running as a service or not and
+	// only log via one method
+	OutputDebugStringA(buf);
+	printf("%s",buf);
+
+	return i;
 }
 
 /* open the com port */
@@ -620,7 +632,7 @@ VOID WINAPI MyServiceCtrlHandler(DWORD opcode)
 
 		if (!SetServiceStatus(wconsd_statusHandle, &wconsd_status)) {
 			status = GetLastError();
-			SvcDebugOut(" [wconsd] SetServiceStatus error %ld\n",status);
+			dprintf(1," [wconsd] SetServiceStatus error %ld\n",status);
 		}
 
 		SetEvent(stopEvent);
@@ -631,14 +643,14 @@ VOID WINAPI MyServiceCtrlHandler(DWORD opcode)
 		break;
 
 	default:
-		SvcDebugOut(" [wconsd] unrecognised opcode %ld\n",opcode);
+		dprintf(1," [wconsd] unrecognised opcode %ld\n",opcode);
 		break;
 	}
 
 	// Send current status
 	if (!SetServiceStatus(wconsd_statusHandle, &wconsd_status)) {
 		status = GetLastError();
-		SvcDebugOut(" [wconsd] SetServiceStatus error %ld\n",status);
+		dprintf(1," [wconsd] SetServiceStatus error %ld\n",status);
 	}
 	return;
 }
@@ -658,7 +670,7 @@ VOID WINAPI ServiceStart(DWORD argc, LPSTR *argv)
 	wconsd_statusHandle = RegisterServiceCtrlHandler(TEXT("wconsd_com1[8n1,9k6] at 9600"),MyServiceCtrlHandler);
 
 	if (wconsd_statusHandle == (SERVICE_STATUS_HANDLE)0) {
-		SvcDebugOut(" [wconsd] RegisterServiceCtrlHandler failed %d\n", GetLastError());
+		dprintf(1," [wconsd] RegisterServiceCtrlHandler failed %d\n", GetLastError());
 		return;
 	}
 
@@ -682,7 +694,7 @@ VOID WINAPI ServiceStart(DWORD argc, LPSTR *argv)
 
 	if (!SetServiceStatus(wconsd_statusHandle, &wconsd_status)) {
 		status = GetLastError();
-		SvcDebugOut(" [wconsd] SetServiceStatus error %ld\n",status);
+		dprintf(1," [wconsd] SetServiceStatus error %ld\n",status);
 	}
 
 	wconsd_main();
@@ -769,9 +781,11 @@ int main(int argc, char **argv)
 		{ NULL, NULL }
 	};
 
+	dprintf(0,"wconsd start\n");
+
 	if (argc==1 || argc==0) {
 		if (!StartServiceCtrlDispatcher(DispatchTable)) {
-			SvcDebugOut(" [wconsd] StartServiceCtrlDispatcher error = %d\n", GetLastError());
+			dprintf(1," [wconsd] StartServiceCtrlDispatcher error = %d\n", GetLastError());
 		}
 		return 0;
 	}
