@@ -286,14 +286,14 @@ DWORD WINAPI wconsd_net_to_com(LPVOID lpParam)
 				if (GetLastError()==ERROR_IO_PENDING) {
 					// Wait for it...
 					if (!GetOverlappedResult(hCom,&o,&wsize,TRUE)) {
-						printf("Error %d (overlapped) writing to COM port\n",GetLastError());
+						dprintf(1,"Error %d (overlapped) writing to COM port\n",GetLastError());
 					}
 				} else {
-					printf("Error %d writing to COM port\n",GetLastError());
+					dprintf(1,"Error %d writing to COM port\n",GetLastError());
 				}
 			}
 			if (wsize!=size) {
-				printf("Eeek! WriteFile: wrote %d of %d\n",wsize,size);
+				dprintf(1,"Eeek! WriteFile: wrote %d of %d\n",wsize,size);
 			}
 		}
 	}
@@ -313,10 +313,10 @@ DWORD WINAPI wconsd_com_to_net(LPVOID lpParam)
 			if (GetLastError()==ERROR_IO_PENDING) {
 				// Wait for overlapped operation to complete
 				if (!GetOverlappedResult(hCom,&o,&size,TRUE)) {
-					printf("Error %d (overlapped) reading from COM port\n",GetLastError());
+					dprintf(1,"Error %d (overlapped) reading from COM port\n",GetLastError());
 				}
 			} else {
-				printf("Error %d reading from COM port\n",GetLastError());
+				dprintf(1,"Error %d reading from COM port\n",GetLastError());
 				SetEvent(connectionCloseEvent);
 				return 0;
 			}
@@ -378,12 +378,12 @@ int run_menu() {
 					if (!strcmp(command, "help") || !strcmp(command, "?")) {				// help
 						send(cs,HELP,strlen(HELP),0);
 					} else if (!strcmp(command, "status")) {		// status
-						sprintf(msg, "status:\r\n\n  port=%d\r\n  speed=%d\r\n  data=%d\r\n  parity=%d\r\n  stop=%d\r\n\n", com_port, com_speed, com_data, com_parity, com_stop);
+						sprintf(msg, "status:\r\n\n  port=%d  speed=%d  data=%d  parity=%d  stop=%d\r\n\n", com_port, com_speed, com_data, com_parity, com_stop);
 						send(cs,msg,strlen(msg),0);
 						if(com_state) {
-							sprintf(msg, "  state=open\r\n  autoclose=%d\r\n\n\n\n\n\n\n\n\n", com_autoclose);
+							sprintf(msg, "  state=open    autoclose=%d\r\n\n", com_autoclose);
 						} else {
-							sprintf(msg, "  state=closed\r\n  autoclose=%d\r\n\n\n\n\n\n\n\n\n", com_autoclose);
+							sprintf(msg, "  state=closed  autoclose=%d\r\n\n", com_autoclose);
 						}
 						send(cs,msg,strlen(msg),0);
 					} else if (!strcmp(command, "copyright")) {	// copyright
@@ -394,24 +394,24 @@ int run_menu() {
 						if (atoi(parameter) >= 1 && atoi(parameter) <= 16) {
 							com_port=atoi(parameter);
 						}
-						sprintf(msg, "status:\r\n\n  port=%d\r\n  speed=%d\r\n  data=%d\r\n  parity=%d\r\n  stop=%d\r\n\n", com_port, com_speed, com_data, com_parity, com_stop);
+						sprintf(msg, "status:\r\n  port=%d  speed=%d  data=%d  parity=%d  stop=%d\r\n\n", com_port, com_speed, com_data, com_parity, com_stop);
 						send(cs,msg,strlen(msg),0);
 						if(com_state) {
-							sprintf(msg, "  state=open\r\n  autoclose=%d\r\n\n\n\n\n\n\n\n\n", com_autoclose);
+							sprintf(msg, "  state=open    autoclose=%d\r\n\n", com_autoclose);
 						} else {
-							sprintf(msg, "  state=closed\r\n  autoclose=%d\r\n\n\n\n\n\n\n\n\n", com_autoclose);
+							sprintf(msg, "  state=closed  autoclose=%d\r\n\n", com_autoclose);
 						}
 						send(cs,msg,strlen(msg),0);
 					} else if (!strcmp(command, "speed")) {		// speed
 						if (atoi(parameter) > 0) {
 							com_speed=atoi(parameter);
 						}
-						sprintf(msg, "status:\r\n\n  port=%d\r\n  speed=%d\r\n  data=%d\r\n  parity=%d\r\n  stop=%d\r\n\n", com_port, com_speed, com_data, com_parity, com_stop);
+						sprintf(msg, "status:\r\n  port=%d  speed=%d  data=%d  parity=%d  stop=%d\r\n\n", com_port, com_speed, com_data, com_parity, com_stop);
 						send(cs,msg,strlen(msg),0);
 						if(com_state) {
-							sprintf(msg, "  state=open\r\n  autoclose=%d\r\n\n\n\n\n\n\n\n\n", com_autoclose);
+							sprintf(msg, "  state=open    autoclose=%d\r\n\n", com_autoclose);
 						} else {
-							sprintf(msg, "  state=closed\r\n  autoclose=%d\r\n\n\n\n\n\n\n\n\n", com_autoclose);
+							sprintf(msg, "  state=closed  autoclose=%d\r\n\n", com_autoclose);
 						}
 						send(cs,msg,strlen(msg),0);
 					} else if (!strcmp(command, "data")) {		// data
@@ -424,12 +424,12 @@ int run_menu() {
 						} else if (!strcmp(parameter, "8")) {
 							com_data=8;
 						}
-						sprintf(msg, "status:\r\n\n  port=%d\r\n  speed=%d\r\n  data=%d\r\n  parity=%d\r\n  stop=%d\r\n\n", com_port, com_speed, com_data, com_parity, com_stop);
+						sprintf(msg, "status:\r\n  port=%d  speed=%d  data=%d  parity=%d  stop=%d\r\n\n", com_port, com_speed, com_data, com_parity, com_stop);
 						send(cs,msg,strlen(msg),0);
 						if(com_state) {
-							sprintf(msg, "  state=open\r\n  autoclose=%d\r\n\n\n\n\n\n\n\n\n", com_autoclose);
+							sprintf(msg, "  state=open    autoclose=%d\r\n\n", com_autoclose);
 						} else {
-							sprintf(msg, "  state=closed\r\n  autoclose=%d\r\n\n\n\n\n\n\n\n\n", com_autoclose);
+							sprintf(msg, "  state=closed  autoclose=%d\r\n\n", com_autoclose);
 						}
 						send(cs,msg,strlen(msg),0);
 					} else if (!strcmp(command, "parity")) {	// parity
@@ -444,12 +444,12 @@ int run_menu() {
 						} else if (!strcmp(parameter, "space")) {
 							com_parity=SPACEPARITY;
 						}
-						sprintf(msg, "status:\r\n\n  port=%d\r\n  speed=%d\r\n  data=%d\r\n  parity=%d\r\n  stop=%d\r\n\n", com_port, com_speed, com_data, com_parity, com_stop);
+						sprintf(msg, "status:\r\n  port=%d  speed=%d  data=%d  parity=%d  stop=%d\r\n\n", com_port, com_speed, com_data, com_parity, com_stop);
 						send(cs,msg,strlen(msg),0);
 						if(com_state) {
-							sprintf(msg, "  state=open\r\n  autoclose=%d\r\n\n\n\n\n\n\n\n\n", com_autoclose);
+							sprintf(msg, "  state=open    autoclose=%d\r\n\n", com_autoclose);
 						} else {
-							sprintf(msg, "  state=closed\r\n  autoclose=%d\r\n\n\n\n\n\n\n\n\n", com_autoclose);
+							sprintf(msg, "  state=closed  autoclose=%d\r\n\n", com_autoclose);
 						}
 						send(cs,msg,strlen(msg),0);
 					} else if (!strcmp(command, "stop")) {
@@ -460,12 +460,12 @@ int run_menu() {
 						} else if (!strcmp(parameter, "two") || !strcmp(parameter, "2")) {
 							com_stop=TWOSTOPBITS;
 						}
-						sprintf(msg, "status:\r\n\n  port=%d\r\n  speed=%d\r\n  data=%d\r\n  parity=%d\r\n  stop=%d\r\n\n", com_port, com_speed, com_data, com_parity, com_stop);
+						sprintf(msg, "status:\r\n  port=%d  speed=%d  data=%d  parity=%d  stop=%d\r\n\n", com_port, com_speed, com_data, com_parity, com_stop);
 						send(cs,msg,strlen(msg),0);
 						if(com_state) {
-							sprintf(msg, "  state=open\r\n  autoclose=%d\r\n\n\n\n\n\n\n\n\n", com_autoclose);
+							sprintf(msg, "  state=open    autoclose=%d\r\n\n", com_autoclose);
 						} else {
-							sprintf(msg, "  state=closed\r\n  autoclose=%d\r\n\n\n\n\n\n\n\n\n", com_autoclose);
+							sprintf(msg, "  state=closed  autoclose=%d\r\n\n", com_autoclose);
 						}
 						send(cs,msg,strlen(msg),0);
 					} else if (!strcmp(command, "open")) {		// open
@@ -478,7 +478,7 @@ int run_menu() {
 								menu=FALSE;
 								return 0;
 							} else {
-								sprintf(msg, "error:\r\n\n  can't open port.\r\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n");
+								sprintf(msg, "error:\r\n  can't open port.\r\n\n");
 								send(cs,msg,strlen(msg),0);
 							}
 						} else {	// port ist still open
@@ -488,7 +488,7 @@ int run_menu() {
 						}
 					} else if (!strcmp(command, "close")) {			// close
 						close_com_port();
-						sprintf(msg, "info:\r\n\n  actual com port closed.\r\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n");
+						sprintf(msg, "info:\r\n  actual com port closed.\r\n\n");
 						send(cs,msg,strlen(msg),0);
 					} else if (!strcmp(command, "autoclose")) {		// autoclose
 						if (!strcmp(parameter, "true") || !strcmp(parameter, "1") || !strcmp(parameter, "yes")) {
@@ -496,18 +496,18 @@ int run_menu() {
 						} else if (!strcmp(parameter, "false") || !strcmp(parameter, "0") || !strcmp(parameter, "no")) {
 							com_autoclose=FALSE;
 						}
-						sprintf(msg, "status:\r\n\n  port=%d\r\n  speed=%d\r\n  data=%d\r\n  parity=%d\r\n  stop=%d\r\n\n", com_port, com_speed, com_data, com_parity, com_stop);
+						sprintf(msg, "status:\r\n  port=%d  speed=%d  data=%d  parity=%d  stop=%d\r\n\n", com_port, com_speed, com_data, com_parity, com_stop);
 						send(cs,msg,strlen(msg),0);
 						if(com_state) {
-							sprintf(msg, "  state=open\r\n  autoclose=%d\r\n\n\n\n\n\n\n\n\n", com_autoclose);
+							sprintf(msg, "  state=open    autoclose=%d\r\n\n", com_autoclose);
 						} else {
-							sprintf(msg, "  state=closed\r\n  autoclose=%d\r\n\n\n\n\n\n\n\n\n", com_autoclose);
+							sprintf(msg, "  state=closed  autoclose=%d\r\n\n", com_autoclose);
 						}
 						send(cs,msg,strlen(msg),0);
 					} else {								// else
-							sprintf(msg, "debug:\r\n\n  command: '%s'        \r\n  parameter: '%s'        \r\n", command, parameter);
+							sprintf(msg, "debug:\r\n  command: '%s'  parameter: '%s'\r\n\n", command, parameter);
 							send(cs,msg,strlen(msg),0);
-							sprintf(msg, "\r\n\n\n\n\n\n\n\n\n\n\n\n\n\n");
+							sprintf(msg, "\r\n\n");
 							send(cs,msg,strlen(msg),0);
 					}
 					send(cs,"> ",2,0);
