@@ -501,6 +501,8 @@ int run_menu() {
 	BOOL menu=TRUE;
 	WORD i;
 
+	int skip_lf=0;
+
 	unsigned long zero=0;
 
 	send_header(cs);
@@ -525,7 +527,7 @@ int run_menu() {
 			} else if (buf[i] == 127 || buf[i]==8) {
 				// backspace
 				if (linelen > 0) {
-					send(cs,"\x7f",1,0);
+					send(cs,"\x08",1,0);
 					linelen--;
 				} else {
 					send(cs,"\x07",1,0);	// bell
@@ -534,17 +536,25 @@ int run_menu() {
 			} else if (buf[i] == 0x0d || buf[i]==0x0a) {
 				// detected cr or lf
 
-				// if this is a zero length line, just ignore it
-				if (linelen==0) {
+				if (buf[i]==0x0a && skip_lf==1) {
+					skip_lf=0;
 					continue;
 				}
 
-				line[linelen]=0;	// ensure string is terminated
+				if (buf[i]==0x0d) {
+					skip_lf=1;
+				}
 
-				menu = process_menu_line(line);
+				// echo the endofline
+				// FIXME - dont do this if linemode is on
+				send(cs,"\r\n",2,0);
 
-				if (!menu) {
-					return 0;
+				if (linelen!=0) {
+					line[linelen]=0;	// ensure string is terminated
+					menu = process_menu_line(line);
+					if (!menu) {
+						return 0;
+					}
 				}
 
 				send(cs,"> ",2,0);
@@ -557,6 +567,8 @@ int run_menu() {
 				continue;
 			} else {
 				// other chars
+				skip_lf=0;
+
 				if (linelen < MAXLEN - 1) {
 					line[linelen] = buf[i];
 					linelen++;
