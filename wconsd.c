@@ -334,7 +334,7 @@ void send_header(SOCKET cs) {
 }
 
 void send_help(SOCKET cs) {
-#define HELP "available commands:\r\n\n  port, speed, data, parity, stop\r\n  help, status, copyright\r\n  open, close, autoclose\r\n"
+#define HELP "available commands:\r\n\n  port, speed, data, parity, stop\r\n  help, status, copyright\r\n  open, close, autoclose\r\n  quit\r\n"
 	send(cs,HELP,strlen(HELP),0);
 }
 
@@ -363,7 +363,7 @@ int process_menu_line(char *line) {
 		}
 		send(cs,msg,strlen(msg),0);
 	} else if (!strcmp(command, "copyright")) {	// copyright
-		sprintf(msg, "  Copyright (c) 2003 by Benjamin Schweizer <gopher at h07 dot org>\r\n                1998 by Stephen Early <Stephen.Early@cl.cam.ac.uk>\r\n\r\n\r\n  This program is free software; you can redistribute it and/or modify\r\n  it under the terms of the GNU General Public License as published by\r\n  the Free Software Foundation; either version 2 of the License, or\r\n  (at your option) any later version.\r\n \r\n  This program is distributed in the hope that it will be useful,\r\n  but WITHOUT ANY WARRANTY; without even the implied warranty of\r\n  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the\r\n  GNU General Public License for more details.\r\n \r\n  You should have received a copy of the GNU General Public License\r\n  along with this program; if not, write to the Free Software\r\n  Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.\r\n\n");
+		sprintf(msg, "  Copyright (c) 2008 by Hamish Coleman <hamish at zot dot org>\r\n  2003 by Benjamin Schweizer <gopher at h07 dot org>\r\n                1998 by Stephen Early <Stephen.Early@cl.cam.ac.uk>\r\n\r\n\r\n  This program is free software; you can redistribute it and/or modify\r\n  it under the terms of the GNU General Public License as published by\r\n  the Free Software Foundation; either version 2 of the License, or\r\n  (at your option) any later version.\r\n \r\n  This program is distributed in the hope that it will be useful,\r\n  but WITHOUT ANY WARRANTY; without even the implied warranty of\r\n  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the\r\n  GNU General Public License for more details.\r\n \r\n  You should have received a copy of the GNU General Public License\r\n  along with this program; if not, write to the Free Software\r\n  Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.\r\n\n");
 		send(cs,msg,strlen(msg),0);
 
 	} else if (!strcmp(command, "port")) {		// port
@@ -451,16 +451,16 @@ int process_menu_line(char *line) {
 		if (!com_state) {
 			if (!open_com_port(&errcode)) {
 				send(cs,"\r\n\f",3,0);
-				menu=FALSE;
-				return menu;
+				// signal to quit the menu
+				return FALSE;
 			} else {
 				sprintf(msg, "error:\r\n  can't open port.\r\n\n");
 				send(cs,msg,strlen(msg),0);
 			}
 		} else {	// port ist still open
 			send(cs,"\r\n\f",3,0);
-			menu=FALSE;
-			return menu;
+			// signal to quit the menu
+			return FALSE;
 		}
 	} else if (!strcmp(command, "close")) {			// close
 		close_com_port();
@@ -480,6 +480,10 @@ int process_menu_line(char *line) {
 			sprintf(msg, "  state=closed  autoclose=%d\r\n\n", com_autoclose);
 		}
 		send(cs,msg,strlen(msg),0);
+	} else if (!strcmp(command, "quit")) {
+		// quit the connection
+		SetEvent(connectionCloseEvent);
+		return FALSE;
 	} else {								// else
 			sprintf(msg, "debug:\r\n  command: '%s'  parameter1: '%s'\r\n\n", command, parameter1);
 			send(cs,msg,strlen(msg),0);
@@ -609,6 +613,7 @@ static void wconsd_main(void)
 			}
 			break;
 		case 2: /* The data connection has been broken */
+			dprintf(1,"wconsd: connection closed\n");
 			SetEvent(threadTermEvent);
 			WaitForSingleObject(netThread,INFINITE);
 			WaitForSingleObject(comThread,INFINITE);
