@@ -289,14 +289,14 @@ DWORD WINAPI wconsd_net_to_com(LPVOID lpParam)
 				if (GetLastError()==ERROR_IO_PENDING) {
 					// Wait for it...
 					if (!GetOverlappedResult(hCom,&o,&wsize,TRUE)) {
-						dprintf(1,"Error %d (overlapped) writing to COM port\n",GetLastError());
+						dprintf(1,"wconsd: Error %d (overlapped) writing to COM port\n",GetLastError());
 					}
 				} else {
-					dprintf(1,"Error %d writing to COM port\n",GetLastError());
+					dprintf(1,"wconsd: Error %d writing to COM port\n",GetLastError());
 				}
 			}
 			if (wsize!=size) {
-				dprintf(1,"Eeek! WriteFile: wrote %d of %d\n",wsize,size);
+				dprintf(1,"wconsd: Eeek! WriteFile: wrote %d of %d\n",wsize,size);
 			}
 		}
 	}
@@ -316,10 +316,10 @@ DWORD WINAPI wconsd_com_to_net(LPVOID lpParam)
 			if (GetLastError()==ERROR_IO_PENDING) {
 				// Wait for overlapped operation to complete
 				if (!GetOverlappedResult(hCom,&o,&size,TRUE)) {
-					dprintf(1,"Error %d (overlapped) reading from COM port\n",GetLastError());
+					dprintf(1,"wconsd: Error %d (overlapped) reading from COM port\n",GetLastError());
 				}
 			} else {
-				dprintf(1,"Error %d reading from COM port\n",GetLastError());
+				dprintf(1,"wconsd: Error %d reading from COM port\n",GetLastError());
 				SetEvent(connectionCloseEvent);
 				return 0;
 			}
@@ -557,6 +557,8 @@ static void wconsd_main(void)
 			WSAResetEvent(listenSocketEvent);
 			as=accept(ls,NULL,NULL);
 
+			dprintf(1,"wconsd: accepted new connection\n");
+
 			if (as!=INVALID_SOCKET) {
 				if (cs!=INVALID_SOCKET) {
 					/* Close down the existing connection and let the new one through */
@@ -635,7 +637,7 @@ VOID WINAPI MyServiceCtrlHandler(DWORD opcode)
 
 		if (!SetServiceStatus(wconsd_statusHandle, &wconsd_status)) {
 			status = GetLastError();
-			dprintf(1," [wconsd] SetServiceStatus error %ld\n",status);
+			dprintf(1,"wconsd: SetServiceStatus error %ld\n",status);
 		}
 
 		SetEvent(stopEvent);
@@ -646,14 +648,14 @@ VOID WINAPI MyServiceCtrlHandler(DWORD opcode)
 		break;
 
 	default:
-		dprintf(1," [wconsd] unrecognised opcode %ld\n",opcode);
+		dprintf(1,"wconsd: unrecognised opcode %ld\n",opcode);
 		break;
 	}
 
 	// Send current status
 	if (!SetServiceStatus(wconsd_statusHandle, &wconsd_status)) {
 		status = GetLastError();
-		dprintf(1," [wconsd] SetServiceStatus error %ld\n",status);
+		dprintf(1,"wconsd: SetServiceStatus error %ld\n",status);
 	}
 	return;
 }
@@ -673,7 +675,7 @@ VOID WINAPI ServiceStart(DWORD argc, LPSTR *argv)
 	wconsd_statusHandle = RegisterServiceCtrlHandler(TEXT("wconsd"),MyServiceCtrlHandler);
 
 	if (wconsd_statusHandle == (SERVICE_STATUS_HANDLE)0) {
-		dprintf(1," [wconsd] RegisterServiceCtrlHandler failed %d\n", GetLastError());
+		dprintf(1,"wconsd: RegisterServiceCtrlHandler failed %d\n", GetLastError());
 		return;
 	}
 
@@ -697,7 +699,7 @@ VOID WINAPI ServiceStart(DWORD argc, LPSTR *argv)
 
 	if (!SetServiceStatus(wconsd_statusHandle, &wconsd_status)) {
 		status = GetLastError();
-		dprintf(1," [wconsd] SetServiceStatus error %ld\n",status);
+		dprintf(1,"wconsd: SetServiceStatus error %ld\n",status);
 	}
 
 	wconsd_main();
@@ -784,11 +786,11 @@ int main(int argc, char **argv)
 		{ NULL, NULL }
 	};
 
-	dprintf(0,"wconsd start\n");
+	dprintf(0,"wconsd: start\n");
 
 	if (argc==1 || argc==0) {
 		if (!StartServiceCtrlDispatcher(DispatchTable)) {
-			dprintf(1," [wconsd] StartServiceCtrlDispatcher error = %d\n", GetLastError());
+			dprintf(1,"wconsd: StartServiceCtrlDispatcher error = %d\n", GetLastError());
 		}
 		return 0;
 	}
