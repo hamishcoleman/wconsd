@@ -28,20 +28,10 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-/* There doesn't appear to be any way to register parameters for the
- * service with the service control manager, so I assume I have to compile
- * configuration information in. Ick. */
-#define HEADER "\fwconsd 0.1                                                  a serial port server\r\n\n\n"
-#define HELP "available commands:\r\n\n  port, speed, data, parity, stop\r\n  help, status, copyright\r\n  open, close, autoclose\r\n\n\n\n\n\n\n\n\n\n\n\n\n\n"
+#define VERSION "0.1.1"
 
-#define PORT 9600
-
-#define COMPORT    1
-#define PORTSPEED  9600
-#define PORTDATA   8
-#define PORTPARITY NOPARITY
-#define PORTSTOP   ONESTOPBIT
-#define PORTAUTOCLOSE TRUE
+#define HEADER "wconsd VERSION a serial port server\r\n\r\n"
+#define HELP "available commands:\r\n\n  port, speed, data, parity, stop\r\n  help, status, copyright\r\n  open, close, autoclose\r\n"
 
 /* Size of buffers for send and receive */
 #define BUFSIZE 1024
@@ -61,13 +51,17 @@ WSAEVENT listenSocketEvent;
 HANDLE hCom;
 DCB dcb;
 COMMTIMEOUTS timeouts;
-int   com_port=COMPORT;
-DWORD com_speed=PORTSPEED;
-BYTE  com_data=PORTDATA;
-BYTE  com_parity=PORTPARITY;
-BYTE  com_stop=PORTSTOP;
-BOOL  com_autoclose=PORTAUTOCLOSE;
+
+/* Port default settings are here */
+int   com_port=1;
+DWORD com_speed=9600;
+BYTE  com_data=8;
+BYTE  com_parity=NOPARITY;
+BYTE  com_stop=ONESTOPBIT;
+BOOL  com_autoclose=TRUE;
 BOOL  com_state=FALSE; // FALSE=closed,TRUE=open
+
+#define TCPPORT 9600
 
 /* Service status: our current status, and handle on service manager */
 SERVICE_STATUS wconsd_status;
@@ -75,7 +69,10 @@ SERVICE_STATUS_HANDLE wconsd_statusHandle;
 
 /* Code starts here */
 
-/* DoeS aNyBody know where this debug output appears? */
+/* 
+ * Debug output can be seen using sysinternals debugview
+ * http://technet.microsoft.com/en-us/sysinternals/bb896647.aspx
+ */
 VOID SvcDebugOut(LPSTR String, DWORD Status)
 {
 	CHAR Buffer[1024];
@@ -224,7 +221,7 @@ DWORD wconsd_init(DWORD argc, LPSTR *argv, DWORD *specificError)
 	/* Create a socket to listen for connections. */
 	memset(&sin,0,sizeof(sin));
 	sin.sin_family=AF_INET;
-	sin.sin_port=htons(PORT);
+	sin.sin_port=htons(TCPPORT);
 	ls=socket(AF_INET,SOCK_STREAM,0);
 	if (ls==INVALID_SOCKET) {
 		*specificError=WSAGetLastError();
