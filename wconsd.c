@@ -56,7 +56,7 @@ BYTE  com_stop=ONESTOPBIT;
 BOOL  com_autoclose=TRUE;
 BOOL  com_state=FALSE; // FALSE=closed,TRUE=open
 
-int   default_tcpport = 23;
+int   default_tcpport = 9600;
 
 /* Service status: our current status, and handle on service manager */
 SERVICE_STATUS wconsd_status;
@@ -847,7 +847,7 @@ int main(int argc, char **argv)
 
 	dprintf(1,"wconsd: Serial Console server\n");
 
-	if (argc) {
+	if (argc>1) {
 		if (strcmp(argv[1],"-i")==0) {
 			// request service installation
 			if (argc!=3) {
@@ -868,10 +868,12 @@ int main(int argc, char **argv)
 		}
 	}
 
+	printf("wconsd: listen on port %i\n",default_tcpport);
+
 	// if we have decided to run as a console app..
 	if (console_application) {
 		int r;
-		printf("wconsd: running in debug mode\n");
+		printf("wconsd: Console Application Mode\n");
 		r=wconsd_init(argc,argv,&err);
 		if (r!=0) {
 			printf("wconsd: debug: init failed, return code %d [%d]\n",r, err);
