@@ -8,3 +8,6 @@ put:
 	pscp ./* 192.168.1.1:s/src/wconsd/
 
 
+wconsd: wconsd.c
+	lcc -o wconsd wconsd.c
+
