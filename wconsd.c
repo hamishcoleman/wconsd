@@ -56,7 +56,7 @@ BYTE  com_stop=ONESTOPBIT;
 BOOL  com_autoclose=TRUE;
 BOOL  com_state=FALSE; // FALSE=closed,TRUE=open
 
-#define TCPPORT 9600
+int   default_tcpport = 23;
 
 /* Service status: our current status, and handle on service manager */
 SERVICE_STATUS wconsd_status;
@@ -233,7 +233,7 @@ DWORD wconsd_init(DWORD argc, LPSTR *argv, DWORD *specificError)
 	/* Create a socket to listen for connections. */
 	memset(&sin,0,sizeof(sin));
 	sin.sin_family=AF_INET;
-	sin.sin_port=htons(TCPPORT);
+	sin.sin_port=htons(default_tcpport);
 	ls=socket(AF_INET,SOCK_STREAM,0);
 	if (ls==INVALID_SOCKET) {
 		*specificError=WSAGetLastError();
@@ -812,45 +812,74 @@ static void usage(void)
 int main(int argc, char **argv)
 {
 	DWORD err;
+	int console_application=0;
 	SERVICE_TABLE_ENTRY DispatchTable[] =
 	{
 		{ "wconsd", ServiceStart },
 		{ NULL, NULL }
 	};
 
+	// debug info for when I test this as a service
+	dprintf(1,"wconsd: started with argc==%i\n",argc);
+
 	if (argc==1 || argc==0) {
-		// We are running from the service control manager
+
+		// assume that our messages are going to the debug log
 		debug_mode=0;
-		if (!StartServiceCtrlDispatcher(DispatchTable)) {
-			dprintf(1,"wconsd: StartServiceCtrlDispatcher error = %d\n", GetLastError());
+
+		// start by trying to run as a service
+		if (StartServiceCtrlDispatcher(DispatchTable)==0) {
+			err = GetLastError();
+			dprintf(1,"wconsd: StartServiceCtrlDispatcher error = %d\n", err);
+
+			if (err != ERROR_FAILED_SERVICE_CONTROLLER_CONNECT) {
+				// any other error, assume fatal
+				return 1;
+			}
 		}
-		return 0;
+
+		// fall through and try running as a command-line application
+		console_application=1;
 	}
 
 	// We are running in debug mode (or any other command-line mode)
 	debug_mode=1;
 
-	if (strcmp(argv[1],"-i")==0) {
-		// request service installation
-		if (argc!=3) {
+	dprintf(1,"wconsd: Serial Console server\n");
+
+	if (argc) {
+		if (strcmp(argv[1],"-i")==0) {
+			// request service installation
+			if (argc!=3) {
+				usage();
+				return 1;
+			}
+			RegisterService(argv[2]);
+			return 0;
+		} else if (strcmp(argv[1],"-r")==0) {
+			// request service removal
+			RemoveService();
+			return 0;
+		} else if (strcmp(argv[1],"-d")==0) {
+			console_application=1;
+		} else {
 			usage();
 			return 1;
 		}
-		RegisterService(argv[2]);
-	} else if (strcmp(argv[1],"-r")==0) {
-		// request service removal
-		RemoveService();
-	} else if (strcmp(argv[1],"-d")==0) {
+	}
+
+	// if we have decided to run as a console app..
+	if (console_application) {
 		int r;
 		printf("wconsd: running in debug mode\n");
 		r=wconsd_init(argc,argv,&err);
 		if (r!=0) {
-			printf("wconsd: debug: init failed, return code %d [%s]\n",r, err);
+			printf("wconsd: debug: init failed, return code %d [%d]\n",r, err);
 			return 1;
 		}
 		wconsd_main();
-		return 0;
-	} else usage();
-	
-	return 1;
+	}
+
+	return 0;
 }
+
