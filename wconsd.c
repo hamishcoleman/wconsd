@@ -324,6 +324,7 @@ int run_menu() {
 	char *buf2split=0, *cmdsplit=0;
 	BOOL menu=TRUE;
 	WORD i;
+	char *linep;
 
 	unsigned long zero=0;
 	
@@ -353,13 +354,14 @@ int run_menu() {
 					send(cs,HEADER,strlen(HEADER),0);
 					line[linelen]=32; // ensure that there is
 					line[linelen+1]=0;    // at least one seperator
-					memcpy(command,line, strchr(line, 32) - line); // seperator
-					memcpy(parameter,strchr(line, 32)+1, line+linelen-strchr(line, 32)); // seperator
-					command[strchr(line, 32) - line]=0;
-					if (line+linelen-strchr(line, 32)-1 < 0) {
+					linep=line;
+					memcpy(command,line, strchr(linep, 32) - linep); // seperator
+					memcpy(parameter,strchr(line, 32)+1, linep+linelen-strchr(line, 32)); // seperator
+					command[strchr(line, 32) - linep]=0;
+					if (linep+linelen-strchr(line, 32)-1 < 0) {
 						parameter[0]=0;
 					} else {
-						parameter[line+linelen-strchr(line, 32)-1]=0;
+						parameter[linep+linelen-strchr(line, 32)-1]=0;
 					}
 					if (!strcmp(command, "help") || !strcmp(command, "?")) {				// help
 						send(cs,HELP,strlen(HELP),0);

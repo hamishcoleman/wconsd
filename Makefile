@@ -9,5 +9,5 @@ put:
 
 
 wconsd.exe: wconsd.c
-	gcc -o wconsd.exe wconsd.c
+	gcc -o wconsd.exe wconsd.c -lws2_32
 
