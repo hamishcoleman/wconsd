@@ -56,7 +56,7 @@ BYTE  com_stop=ONESTOPBIT;
 BOOL  com_autoclose=TRUE;
 BOOL  com_state=FALSE; // FALSE=closed,TRUE=open
 
-int   default_tcpport = 9600;
+int   default_tcpport = 23;
 
 /* Service status: our current status, and handle on service manager */
 SERVICE_STATUS wconsd_status;
@@ -519,17 +519,26 @@ int run_menu() {
 		}
 
 		for (i = 0; i < size; i++) {
-			if (buf[i] == 127 || buf[i]==8) {	// backspace
+			if (buf[i]==0) {
+				// strange, I'm not expecting nul bytes !
+				continue;
+			} else if (buf[i] == 127 || buf[i]==8) {
+				// backspace
 				if (linelen > 0) {
 					send(cs,"\x7f",1,0);
 					linelen--;
 				} else {
 					send(cs,"\x07",1,0);	// bell
 				}
-			} else if (buf[i] == 10) {
-				// ignore LF chars
 				continue;
-			} else if (buf[i] == 13) {	// cr
+			} else if (buf[i] == 0x0d || buf[i]==0x0a) {
+				// detected cr or lf
+
+				// if this is a zero length line, just ignore it
+				if (linelen==0) {
+					continue;
+				}
+
 				line[linelen]=0;	// ensure string is terminated
 
 				menu = process_menu_line(line);
@@ -540,6 +549,12 @@ int run_menu() {
 
 				send(cs,"> ",2,0);
 				linelen=0;
+				continue;
+			} else if (buf[i]==0xff) {
+				// telnet option packet
+				// skip next two bytes as well
+				i+=2;
+				continue;
 			} else {
 				// other chars
 				if (linelen < MAXLEN - 1) {
@@ -551,6 +566,7 @@ int run_menu() {
 				} else {
 					send(cs,"\x07",1,0); // bell
 				}
+				continue;
 			}
 		}
 	}
@@ -873,7 +889,7 @@ int main(int argc, char **argv)
 	// if we have decided to run as a console app..
 	if (console_application) {
 		int r;
-		printf("wconsd: Console Application Mode\n");
+		printf("wconsd: Console Application Mode (version %s)\n",VERSION);
 		r=wconsd_init(argc,argv,&err);
 		if (r!=0) {
 			printf("wconsd: debug: init failed, return code %d [%d]\n",r, err);
