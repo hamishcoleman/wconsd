@@ -888,6 +888,9 @@ int main(int argc, char **argv)
 			// request service removal
 			RemoveService();
 			return 0;
+		} else if (strcmp(argv[1],"-p")==0) {
+			console_application=1;
+			default_tcpport = atoi(argv[2]);
 		} else if (strcmp(argv[1],"-d")==0) {
 			console_application=1;
 		} else {

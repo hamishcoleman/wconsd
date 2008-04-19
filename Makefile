@@ -14,3 +14,9 @@ wconsd.exe: wconsd.c
 test: wconsd.exe
 	./wconsd.exe -d
 
+wconsd: wconsd.c
+	winegcc -mno-cygwin -o wconsd wconsd.c -mwindows -lws2_32
+
+wine: wconsd
+	/usr/lib/wine/wine.bin wconsd.exe.so -p 9600
+
