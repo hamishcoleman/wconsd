@@ -23,6 +23,7 @@
 /* Note: winsock2.h MUST be included before windows.h */
 
 #include <winsock2.h>
+#include <ws2tcpip.h>
 #include <windows.h>
 #include <winsvc.h>
 #include <stdio.h>
@@ -76,6 +77,7 @@ struct connection {
 	HANDLE netThread;
 	HANDLE serial;
 	HANDLE serialThread;
+	int option_echo;	/* will we echo chars recieved? */
 	int net_bytes_rx;
 	int net_bytes_tx;
 };
@@ -127,7 +129,7 @@ int netprintf(struct connection *conn, const char *fmt, ...) {
 	bytes = send(conn->net,buf,(i>MAXLEN)?MAXLEN-1:i,0);
 
 	if (bytes==-1) {
-		dprintf(1,"wconsd[%i]: netprintf: send error %i",conn->id,GetLastError());
+		dprintf(1,"wconsd[%i]: netprintf: send error %i\n",conn->id,GetLastError());
 	} else {
 		conn->net_bytes_tx += bytes;
 	}
@@ -542,14 +544,17 @@ int process_menu_line(struct connection*conn, char *line) {
 	} else if (!strcmp(command, "show_conn_table")) {
 		int i;
 		netprintf(conn,
-				"slot A id M mTh net netTh serial serialTh netrx nettx\r\n");
+				"slot A id M mTh net netTh serial serialTh E netrx nettx\r\n");
+		netprintf(conn,
+				"---- - -- - --- --- ----- ------ -------- - ----- -----\r\n");
 		for (i=0;i<MAXCONNECTIONS;i++) {
 			netprintf(conn,
-				"%4i %i %2i %i %3i %3i %5i %6i %8i %5i %5i\r\n",
+				"%-4i %i %2i %i %3i %3i %5i %6i %8i %i %5i %5i\r\n",
 				i, connection[i].active, connection[i].id,
 				connection[i].menuactive, connection[i].menuThread,
 				connection[i].net, connection[i].netThread,
 				connection[i].serial, connection[i].serialThread,
+				connection[i].option_echo,
 				connection[i].net_bytes_rx, connection[i].net_bytes_tx
 				);
 		}
@@ -561,13 +566,99 @@ int process_menu_line(struct connection*conn, char *line) {
 	return 1;
 }
 
+int process_telnet_option(struct connection*conn, unsigned char *buf) {
+
+	switch (buf[1]) {
+		case 0xf0:	/* suboption end */
+		case 241:	/* NOP */
+		case 242:	/* Data Mark */
+			dprintf(1,"wconsd[%i]: option IAC %i\n",conn->id,buf[1]);
+			return 1;
+		case 243:	/* Break */
+			/* TODO */
+			dprintf(1,"wconsd[%i]: break not supported\n",conn->id);
+			return 1;
+		case 244:	/* suspend */
+		case 245:	/* abort output */
+			dprintf(1,"wconsd[%i]: option IAC %i\n",conn->id,buf[1]);
+			return 1;
+		case 246:	/* are you there */
+			dprintf(1,"wconsd[%i]: option IAC AYT\n",conn->id);
+			netprintf(conn,"yes\r\n");
+			return 1;
+		case 247:	/* erase character */
+		case 248:	/* erase line */
+		case 249:	/* go ahead */
+			dprintf(1,"wconsd[%i]: option IAC %i\n",conn->id,buf[1]);
+			return 1;
+		case 0xfa:	/* suboption begin */
+			if (buf[3]==0) {
+				/*
+				 * I dont expect us to get any IS statements ...
+				 * and if we do, I'm going to need to rewrite the
+				 * way chars are absorbed
+				 */
+				dprintf(1,"wconsd[%i]: option IAC SB %i IS\n",conn->id,buf[2]);
+				return 3;
+			} else if (buf[3]>1) {
+				dprintf(1,"wconsd[%i]: option IAC SB %i error\n",conn->id,buf[2]);
+				return 3;
+			}
+			dprintf(1,"wconsd[%i]: option IAC SB %i SEND\n",conn->id,buf[2]);
+			switch (buf[2]) {
+				case 5:	/* STATUS */
+					netprintf(conn,"%s%c%s%s%s",
+						"\xff\xfa\x05",
+						0,
+						"\xfb\x05",
+						conn->option_echo?"\xfb\x01":"",
+						"\xff\xf0");
+			}
+			return 5;
+		case 0xfb:	/* WILL */
+			dprintf(1,"wconsd[%i]: option IAC WILL %i\n",conn->id,buf[2]);
+			return 2;
+		case 0xfc:	/* WONT */
+			dprintf(1,"wconsd[%i]: option IAC WONT %i\n",conn->id,buf[2]);
+			return 2;
+		case 0xfd:	/* DO */
+			switch (buf[2]) {
+				case 0x01:	/* ECHO */
+					dprintf(1,"wconsd[%i]: DO ECHO\n",conn->id);
+					conn->option_echo=1;
+					break;
+				case 0x03:	/* suppress go ahead */
+					dprintf(1,"wconsd[%i]: DO suppress go ahead\n",conn->id);
+					break;
+			}
+			return 2;
+		case 0xfe:	/* DONT */
+			dprintf(1,"wconsd[%i]: option IAC DONT %i\n",conn->id,buf[2]);
+			return 2;
+		case 0xff:	/* send ff */
+			/* TODO - work out how to support this */
+			dprintf(1,"wconsd[%i]: does not support quoted 0xff\n",conn->id);
+			return 1;
+		default:
+			dprintf(1,"wconsd[%i]: option IAC %i %i\n",conn->id,buf[1],buf[2]);
+	}
+
+	/* not normally reached */
+	return 2;
+}
+
 int run_menu(struct connection * conn) {
-	unsigned char buf[BUFSIZE], line[MAXLEN];
+	unsigned char buf[BUFSIZE+5];	/* ensure there is room for our kludge telnet options */
+	unsigned char line[MAXLEN];
 	DWORD size, linelen=0;
 	WORD i;
 
-	int skip_lf=0;
 	unsigned long zero=0;
+
+	/* IAC WILL ECHO */
+	/* IAC WILL suppress go ahead */
+	/* IAC WILL status */
+	netprintf(conn,"\xff\xfb\x01\xff\xfb\x03\xff\xfb\x05");
 
 	netprintf(conn,"wconsd " VERSION " a serial port server\r\n\r\n");
 	send_help(conn);
@@ -575,6 +666,7 @@ int run_menu(struct connection * conn) {
 
 	while (conn->menuactive) {
 		size=recv(conn->net,(void*)&buf,BUFSIZE,0);
+
 		if (size==0) {
 			closesocket(conn->net);
 			conn->net=INVALID_SOCKET;
@@ -582,6 +674,7 @@ int run_menu(struct connection * conn) {
 			return 0; /* signal running=0 */
 		}
 		if (size==SOCKET_ERROR) {
+			dprintf(1,"wconsd[%i]: socket error\n",conn->id);
 			/* General paranoia about blocking sockets */
 			ioctlsocket(conn->net,FIONBIO,&zero);
 			continue;
@@ -605,18 +698,13 @@ int run_menu(struct connection * conn) {
 			} else if (buf[i] == 0x0d || buf[i]==0x0a) {
 				// detected cr or lf
 
-				if (buf[i]==0x0a && skip_lf==1) {
-					skip_lf=0;
-					continue;
+				if (i+1<size && (buf[i+1]==0x0a || buf[i+1]==0)) {
+					i++;
 				}
 
-				if (buf[i]==0x0d) {
-					skip_lf=1;
-				}
-
-				// echo the endofline
-				// FIXME - dont do this if linemode is on
-				netprintf(conn,"\r\n");
+				if (conn->option_echo)
+					/* echo the endofline */
+					netprintf(conn,"\r\n");
 
 				if (linelen!=0) {
 					int running;
@@ -632,21 +720,31 @@ int run_menu(struct connection * conn) {
 				netprintf(conn,"> ");
 				linelen=0;
 				continue;
+			} else if (buf[i] <0x20) {
+				/* ignore other ctrl chars */
+				continue;
 			} else if (buf[i]==0xff) {
 				// telnet option packet
-				// skip next two bytes as well
-				i+=2;
+
+				/*
+				 * Note that we avoid accessing outside the buffer
+				 * by ensuring that the buffer is larger than
+				 * the largest recv
+				 *
+				 * this doesnt help us if there is a split buffer from
+				 * the client
+				 */
+				i+=process_telnet_option(conn,&buf[i]);
 				continue;
 			} else {
 				// other chars
-				skip_lf=0;
 
 				if (linelen < MAXLEN - 1) {
 					line[linelen] = buf[i];
 					linelen++;
-					// FIXME - dont echo if the other end is in
-					// linemode
-					netprintf(conn,"%c",buf[i]);	/* echo */
+					if (conn->option_echo) {
+						netprintf(conn,"%c",buf[i]);	/* echo */
+					}
 				} else {
 					netprintf(conn,"\x07"); /* linebuf full bell */
 				}
@@ -744,7 +842,7 @@ static void wconsd_main(void)
 				break;
 			}
 
-			if (!getnameinfo(&sa,salen,&buf,sizeof(buf),NULL,0,0)) {
+			if (!getnameinfo((struct sockaddr*)&sa,salen,buf,sizeof(buf),NULL,0,0)) {
 				dprintf(1,"wconsd: new connection from %08x\n",
 					htonl(sa.sin_addr.s_addr));
 			} else {
@@ -772,6 +870,7 @@ static void wconsd_main(void)
 			connection[i].netThread=NULL;
 			connection[i].serial=INVALID_HANDLE_VALUE;
 			connection[i].serialThread=NULL;
+			connection[i].option_echo=0;
 			connection[i].net_bytes_rx=0;
 			connection[i].net_bytes_tx=0;
 
