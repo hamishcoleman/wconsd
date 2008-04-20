@@ -1,7 +1,8 @@
 /*
  * wconsd.c - serial port server service for Windows NT
  *
- * Copyright (c) 2003 Benjamin Schweizer <gopher at h07 dot org>
+ * Copyright (c) 2008 Hamish Coleman <hamish@zot.org>
+ *               2003 Benjamin Schweizer <gopher at h07 dot org>
  *               1998 Stephen Early <Stephen.Early@cl.cam.ac.uk>
  *
  *
@@ -29,7 +30,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-#define VERSION "0.1.2"
+#define VERSION "0.1.5"
 
 /* Size of buffers for send and receive */
 #define BUFSIZE 1024
