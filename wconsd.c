@@ -67,8 +67,8 @@ int debug_mode = 0;
 #define MAXCONNECTIONS	8
 
 struct connection {
-	int connected;
-	int menuactive;
+	int connected;		/* a connected entry cannot be reused */
+	int menuactive;		/* dont run the serial pump on a menu */
 	HANDLE menuThread;
 	SOCKET net;
 	HANDLE netThread;
@@ -90,7 +90,7 @@ struct connection connection[MAXCONNECTIONS];
 int dprintf_level = 1;
 int dprintf(unsigned char severity, const char *fmt, ...) {
 	va_list args;
-	char buf[1025];
+	char buf[MAXLEN];
 	int i;
 
 	if (severity > dprintf_level)
@@ -106,6 +106,22 @@ int dprintf(unsigned char severity, const char *fmt, ...) {
 		OutputDebugStringA(buf);
 	}
 
+	return i;
+}
+
+/*
+ * format a string and send it to a file descriptor
+ */
+int fdprintf(SOCKET fd, const char *fmt, ...) {
+	va_list args;
+	char buf[MAXLEN];
+	int i;
+
+	va_start(args,fmt);
+	i=vsnprintf(buf,sizeof(buf),fmt,args);
+	va_end(args);
+
+	send(fd,buf,(i>MAXLEN)?MAXLEN-1:i,0);
 	return i;
 }
 
@@ -350,68 +366,92 @@ DWORD WINAPI wconsd_com_to_net(LPVOID lpParam)
 	return 0;
 }
 
-void send_header(SOCKET cs) {
-#define HEADER "wconsd " VERSION " a serial port server\r\n\r\n"
-	send(cs,HEADER,strlen(HEADER),0);
-}
-
 void send_help(SOCKET cs) {
-#define HELP "available commands:\r\n\n  port, speed, data, parity, stop\r\n  help, status, copyright\r\n  open, close, autoclose\r\n  quit\r\n"
-	send(cs,HELP,strlen(HELP),0);
+	fdprintf(cs,"available commands:\r\n\n"
+		    "  port, speed, data, parity, stop\r\n"
+		    "  help, status, copyright\r\n"
+		    "  open, close, autoclose\r\n"
+		    "  quit\r\n");
 }
 
-int process_menu_line(char *line) {
-	BYTE msg[MAXLEN];
+void show_status(struct connection* conn) {
+	/* print the status to the net connection */
+
+	fdprintf(conn->net, "status:\r\n\n"
+			"  port=%d  speed=%d  data=%d  parity=%d  stop=%d\r\n\n",
+			com_port, com_speed, com_data, com_parity, com_stop);
+
+	if(com_state) {
+		fdprintf(conn->net, "  state=open    autoclose=%d\r\n\n", com_autoclose);
+	} else {
+		fdprintf(conn->net, "  state=closed  autoclose=%d\r\n\n", com_autoclose);
+	}
+}
+
+/*
+ * I thought that I would need this a lot, but it turns out that there
+ * was a lot of duplicated code
+ */
+int check_atoi(char *p,int old_value,SOCKET fd,char *error) {
+	if (!p) {
+		fdprintf(fd,error);
+		return old_value;
+	}
+
+	return atoi(p);
+}
+
+int process_menu_line(struct connection*conn, char *line) {
 	DWORD errcode;
-	BOOL menu=TRUE;
 	char *command;
 	char *parameter1;
 
+	/*
+	 * FIXME - non re-entrant code
+	 *
+	 * based on winelib, I am unsure if windows has strtok_r
+	 * and thus I am running these two strtok as close as possible.
+	 * I am definitely not going to re-invent the wheel with my own
+	 * code.
+	 */
 	command = strtok(line," ");
 	parameter1 = strtok(NULL," ");
-
 
 	if (!strcmp(command, "help") || !strcmp(command, "?")) {
 		// help
 		send_help(cs);
 	} else if (!strcmp(command, "status")) {
 		// status
-		sprintf(msg, "status:\r\n\n  port=%d  speed=%d  data=%d  parity=%d  stop=%d\r\n\n", com_port, com_speed, com_data, com_parity, com_stop);
-		send(cs,msg,strlen(msg),0);
-		if(com_state) {
-			sprintf(msg, "  state=open    autoclose=%d\r\n\n", com_autoclose);
-		} else {
-			sprintf(msg, "  state=closed  autoclose=%d\r\n\n", com_autoclose);
-		}
-		send(cs,msg,strlen(msg),0);
+		show_status(conn);
 	} else if (!strcmp(command, "copyright")) {	// copyright
-		sprintf(msg, "  Copyright (c) 2008 by Hamish Coleman <hamish at zot dot org>\r\n  2003 by Benjamin Schweizer <gopher at h07 dot org>\r\n                1998 by Stephen Early <Stephen.Early@cl.cam.ac.uk>\r\n\r\n\r\n  This program is free software; you can redistribute it and/or modify\r\n  it under the terms of the GNU General Public License as published by\r\n  the Free Software Foundation; either version 2 of the License, or\r\n  (at your option) any later version.\r\n \r\n  This program is distributed in the hope that it will be useful,\r\n  but WITHOUT ANY WARRANTY; without even the implied warranty of\r\n  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the\r\n  GNU General Public License for more details.\r\n \r\n  You should have received a copy of the GNU General Public License\r\n  along with this program; if not, write to the Free Software\r\n  Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.\r\n\n");
-		send(cs,msg,strlen(msg),0);
-
+		fdprintf(conn->net,
+		"  Copyright (c) 2008 by Hamish Coleman <hamish@zot.org>\r\n"
+		"                2003 by Benjamin Schweizer <gopher at h07 dot org>\r\n"
+		"                1998 by Stephen Early <Stephen.Early@cl.cam.ac.uk>\r\n"
+		"\r\n"
+		"\r\n"
+		"  This program is free software; you can redistribute it and/or modify\r\n"
+		"  it under the terms of the GNU General Public License as published by\r\n"
+		"  the Free Software Foundation; either version 2 of the License, or\r\n"
+		"  (at your option) any later version.\r\n"
+		"\r\n"
+		"  This program is distributed in the hope that it will be useful,\r\n"
+		"  but WITHOUT ANY WARRANTY; without even the implied warranty of\r\n"
+		"  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the\r\n"
+		"  GNU General Public License for more details.\r\n"
+		"\r\n"
+		"  You should have received a copy of the GNU General Public License\r\n"
+		"  along with this program; if not, write to the Free Software\r\n"
+		"  Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.\r\n"
+		"\n");
 	} else if (!strcmp(command, "port")) {		// port
-		if (atoi(parameter1) >= 1 && atoi(parameter1) <= 16) {
-			com_port=atoi(parameter1);
+		int new = check_atoi(parameter1,com_port,conn->net,"must specify a port\r\n");
+
+		if (new >= 1 && new <= 16) {
+			com_port=new;
 		}
-		sprintf(msg, "status:\r\n  port=%d  speed=%d  data=%d  parity=%d  stop=%d\r\n\n", com_port, com_speed, com_data, com_parity, com_stop);
-		send(cs,msg,strlen(msg),0);
-		if(com_state) {
-			sprintf(msg, "  state=open    autoclose=%d\r\n\n", com_autoclose);
-		} else {
-			sprintf(msg, "  state=closed  autoclose=%d\r\n\n", com_autoclose);
-		}
-		send(cs,msg,strlen(msg),0);
 	} else if (!strcmp(command, "speed")) {		// speed
-		if (atoi(parameter1) > 0) {
-			com_speed=atoi(parameter1);
-		}
-		sprintf(msg, "status:\r\n  port=%d  speed=%d  data=%d  parity=%d  stop=%d\r\n\n", com_port, com_speed, com_data, com_parity, com_stop);
-		send(cs,msg,strlen(msg),0);
-		if(com_state) {
-			sprintf(msg, "  state=open    autoclose=%d\r\n\n", com_autoclose);
-		} else {
-			sprintf(msg, "  state=closed  autoclose=%d\r\n\n", com_autoclose);
-		}
-		send(cs,msg,strlen(msg),0);
+		com_speed = check_atoi(parameter1,com_port,conn->net,"must specify a speed\r\n");
 	} else if (!strcmp(command, "data")) {		// data
 		if (!strcmp(parameter1, "5")) {
 			com_data=5;
@@ -422,14 +462,7 @@ int process_menu_line(char *line) {
 		} else if (!strcmp(parameter1, "8")) {
 			com_data=8;
 		}
-		sprintf(msg, "status:\r\n  port=%d  speed=%d  data=%d  parity=%d  stop=%d\r\n\n", com_port, com_speed, com_data, com_parity, com_stop);
-		send(cs,msg,strlen(msg),0);
-		if(com_state) {
-			sprintf(msg, "  state=open    autoclose=%d\r\n\n", com_autoclose);
-		} else {
-			sprintf(msg, "  state=closed  autoclose=%d\r\n\n", com_autoclose);
-		}
-		send(cs,msg,strlen(msg),0);
+		show_status(conn);
 	} else if (!strcmp(command, "parity")) {	// parity
 		if (!strcmp(parameter1, "no") || !strcmp(parameter1, "0")) {
 			com_parity=NOPARITY;
@@ -442,14 +475,7 @@ int process_menu_line(char *line) {
 		} else if (!strcmp(parameter1, "space")) {
 			com_parity=SPACEPARITY;
 		}
-		sprintf(msg, "status:\r\n  port=%d  speed=%d  data=%d  parity=%d  stop=%d\r\n\n", com_port, com_speed, com_data, com_parity, com_stop);
-		send(cs,msg,strlen(msg),0);
-		if(com_state) {
-			sprintf(msg, "  state=open    autoclose=%d\r\n\n", com_autoclose);
-		} else {
-			sprintf(msg, "  state=closed  autoclose=%d\r\n\n", com_autoclose);
-		}
-		send(cs,msg,strlen(msg),0);
+		show_status(conn);
 	} else if (!strcmp(command, "stop")) {
 		if (!strcmp(parameter1, "one") || !strcmp(parameter1, "1")) {
 			com_stop=ONESTOPBIT;
@@ -458,85 +484,78 @@ int process_menu_line(char *line) {
 		} else if (!strcmp(parameter1, "two") || !strcmp(parameter1, "2")) {
 			com_stop=TWOSTOPBITS;
 		}
-		sprintf(msg, "status:\r\n  port=%d  speed=%d  data=%d  parity=%d  stop=%d\r\n\n", com_port, com_speed, com_data, com_parity, com_stop);
-		send(cs,msg,strlen(msg),0);
-		if(com_state) {
-			sprintf(msg, "  state=open    autoclose=%d\r\n\n", com_autoclose);
-		} else {
-			sprintf(msg, "  state=closed  autoclose=%d\r\n\n", com_autoclose);
-		}
-		send(cs,msg,strlen(msg),0);
+		show_status(conn);
 	} else if (!strcmp(command, "open")) {		// open
-		if (atoi(parameter1) > 0) {	// optional port parameter
-			com_port=atoi(parameter1);
+		int new = check_atoi(parameter1,com_port,conn->net,"must specify a port\r\n");
+
+		if (new >= 1 && new <= 16) {
+			com_port=new;
 		}
-		if (!com_state) {
-			if (!open_com_port(&errcode)) {
-				send(cs,"\r\n\f",3,0);
-				// signal to quit the menu
-				return FALSE;
-			} else {
-				sprintf(msg, "error:\r\n  can't open port.\r\n\n");
-				send(cs,msg,strlen(msg),0);
-			}
-		} else {	// port ist still open
-			send(cs,"\r\n\f",3,0);
+		if (com_state) {
+			/* port ist still open */
+			send(cs,"\r\n\n",3,0);
+			/* signal to quit the menu */
+			conn->menuactive=0;
+			/* and return still running */
+			return 1;
+		}
+
+		if (!open_com_port(&errcode)) {
+			send(cs,"\r\n\n",3,0);
 			// signal to quit the menu
-			return FALSE;
+			conn->menuactive=0;
+			/* and return still running */
+			return 1;
+		} else {
+			fdprintf(conn->net,"error: cannot open port\r\n\n");
 		}
 	} else if (!strcmp(command, "close")) {			// close
 		close_com_port();
-		sprintf(msg, "info:\r\n  actual com port closed.\r\n\n");
-		send(cs,msg,strlen(msg),0);
+		fdprintf(conn->net,"info: actual com port closed\r\n\n");
 	} else if (!strcmp(command, "autoclose")) {		// autoclose
 		if (!strcmp(parameter1, "true") || !strcmp(parameter1, "1") || !strcmp(parameter1, "yes")) {
 			com_autoclose=TRUE;
 		} else if (!strcmp(parameter1, "false") || !strcmp(parameter1, "0") || !strcmp(parameter1, "no")) {
 			com_autoclose=FALSE;
 		}
-		sprintf(msg, "status:\r\n  port=%d  speed=%d  data=%d  parity=%d  stop=%d\r\n\n", com_port, com_speed, com_data, com_parity, com_stop);
-		send(cs,msg,strlen(msg),0);
-		if(com_state) {
-			sprintf(msg, "  state=open    autoclose=%d\r\n\n", com_autoclose);
-		} else {
-			sprintf(msg, "  state=closed  autoclose=%d\r\n\n", com_autoclose);
-		}
-		send(cs,msg,strlen(msg),0);
+		show_status(conn);
 	} else if (!strcmp(command, "quit")) {
 		// quit the connection
 		SetEvent(connectionCloseEvent);
-		return FALSE;
-	} else {								// else
-			sprintf(msg, "debug:\r\n  command: '%s'  parameter1: '%s'\r\n\n", command, parameter1);
-			send(cs,msg,strlen(msg),0);
-			sprintf(msg, "\r\n\n");
-			send(cs,msg,strlen(msg),0);
+		conn->menuactive=0;
+		/* and return not running */
+		return 0;
+	} else {
+		/* other, unknown commands */
+		fdprintf(conn->net,"debug: line='%s', command='%s'\r\n\n",line,command);
 	}
-	return menu;
+	/* return still running */
+	return 1;
 }
 
-int run_menu() {
+int run_menu(struct connection * conn) {
 	unsigned char buf[BUFSIZE], line[MAXLEN];
 	DWORD size, linelen=0;
-	BOOL menu=TRUE;
 	WORD i;
 
 	int skip_lf=0;
-
 	unsigned long zero=0;
 
-	send_header(cs);
-	send_help(cs);	
-	send(cs,"> ",2,0);
-	while (menu) {
-		size=recv(cs,(void*)&buf,BUFSIZE,0);
+	fdprintf(conn->net,"wconsd " VERSION " a serial port server\r\n\r\n");
+	send_help(conn->net);
+	send(conn->net,"> ",2,0);
+
+	while (conn->menuactive) {
+		size=recv(conn->net,(void*)&buf,BUFSIZE,0);
 		if (size==0) {
+			closesocket(conn->net);
+			conn->net=INVALID_SOCKET;
 			SetEvent(connectionCloseEvent);
-			return 1;
+			return 0; /* signal running=0 */
 		}
 		if (size==SOCKET_ERROR) {
 			/* General paranoia about blocking sockets */
-			ioctlsocket(cs,FIONBIO,&zero);
+			ioctlsocket(conn->net,FIONBIO,&zero);
 			continue;
 		}
 
@@ -547,10 +566,11 @@ int run_menu() {
 			} else if (buf[i] == 127 || buf[i]==8) {
 				// backspace
 				if (linelen > 0) {
-					send(cs,"\x08",1,0);
+					send(conn->net,"\x08",1,0);
 					linelen--;
 				} else {
-					send(cs,"\x07",1,0);	// bell
+					/* if the linebuf is empty, ring the bell */
+					send(conn->net,"\x07",1,0);
 				}
 				continue;
 			} else if (buf[i] == 0x0d || buf[i]==0x0a) {
@@ -567,17 +587,20 @@ int run_menu() {
 
 				// echo the endofline
 				// FIXME - dont do this if linemode is on
-				send(cs,"\r\n",2,0);
+				send(conn->net,"\r\n",2,0);
 
 				if (linelen!=0) {
+					int running;
 					line[linelen]=0;	// ensure string is terminated
-					menu = process_menu_line((char*)line);
-					if (!menu) {
-						return 0;
+
+					running = process_menu_line(conn,(char*)line);
+					if (!conn->menuactive) {
+						/* exiting the menu.. */
+						return running;
 					}
 				}
 
-				send(cs,"> ",2,0);
+				send(conn->net,"> ",2,0);
 				linelen=0;
 				continue;
 			} else if (buf[i]==0xff) {
@@ -594,27 +617,43 @@ int run_menu() {
 					linelen++;
 					// FIXME - dont echo if the other end is in
 					// linemode
-					send(cs,(void*)&buf[i],1,0);		// echo the char
+					send(conn->net,(void*)&buf[i],1,0);	/* echo */
 				} else {
-					send(cs,"\x07",1,0); // bell
+					send(conn->net,"\x07",1,0); /* linebuf full bell */
 				}
 				continue;
 			}
 		}
 	}
+
+	/* not reached */
 	return 0;
 }
 
 DWORD WINAPI thread_new_connection(LPVOID lpParam) {
+	struct connection * conn = (struct connection*)lpParam;
 	HANDLE netThread=NULL, comThread=NULL;
+	int running=1;
 
-	// run the menu to ask the user questions
-	run_menu();
+	while(running) {
+		if (conn->menuactive) {
+			/* run the menu to ask the user questions */
+			running = run_menu(conn);
+		} else {
+			/* they must have opened the com port, so start the threads */
+			PurgeComm(hCom,PURGE_RXCLEAR|PURGE_RXABORT);
+			netThread=CreateThread(NULL,0,wconsd_net_to_com,NULL,0,NULL);
+			comThread=CreateThread(NULL,0,wconsd_com_to_net,NULL,0,NULL);
 
-	// they must have opened the com port, so start the threads
-	PurgeComm(hCom,PURGE_RXCLEAR|PURGE_RXABORT);
-	netThread=CreateThread(NULL,0,wconsd_net_to_com,NULL,0,NULL);
-	comThread=CreateThread(NULL,0,wconsd_com_to_net,NULL,0,NULL);
+			/* since I dont wait for the threads, we finish here */
+			running = 0;
+		}
+	}
+
+	/* cleanup */
+	dprintf(1,"wconsd: connection closed\n");
+	/* TODO print bytecounts */
+	/* maybe close file descriptors? */
 
 	return 0;
 }
@@ -677,8 +716,8 @@ static void wconsd_main(void)
 				closesocket(as);
 				break;
 			}
-			connection[i].connected=1;
-			connection[i].menuactive=1;
+			connection[i].connected=1;	/* mark this entry busy */
+			connection[i].menuactive=1;	/* start in the menu */
 			connection[i].menuThread=NULL;
 			connection[i].net=as;
 			connection[i].netThread=NULL;
