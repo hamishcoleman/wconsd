@@ -654,6 +654,7 @@ int run_menu(struct connection * conn) {
 	WORD i;
 
 	unsigned long zero=0;
+	fd_set set_read;
 
 	/* IAC WILL ECHO */
 	/* IAC WILL suppress go ahead */
@@ -664,7 +665,10 @@ int run_menu(struct connection * conn) {
 	send_help(conn);
 	netprintf(conn,"> ");
 
+	FD_ZERO(&set_read);
 	while (conn->menuactive) {
+		FD_SET(conn->net,&set_read);
+		select(conn->net+1,&set_read,NULL,NULL,NULL);
 		size=recv(conn->net,(void*)&buf,BUFSIZE,0);
 
 		if (size==0) {
