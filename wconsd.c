@@ -66,8 +66,10 @@ int debug_mode = 0;
 
 #define MAXCONNECTIONS	8
 
+int next_connection_id = 0;	/* lifetime unique connection id */
 struct connection {
-	int connected;		/* a connected entry cannot be reused */
+	int active;		/* an active entry cannot be reused */
+	int id;			/* connection identifier */
 	int menuactive;		/* dont run the serial pump on a menu */
 	HANDLE menuThread;
 	SOCKET net;
@@ -110,18 +112,26 @@ int dprintf(unsigned char severity, const char *fmt, ...) {
 }
 
 /*
- * format a string and send it to a file descriptor
+ * format a string and send it to a net connection
  */
-int fdprintf(SOCKET fd, const char *fmt, ...) {
+int netprintf(struct connection *conn, const char *fmt, ...) {
 	va_list args;
 	char buf[MAXLEN];
 	int i;
+	int bytes;
 
 	va_start(args,fmt);
 	i=vsnprintf(buf,sizeof(buf),fmt,args);
 	va_end(args);
 
-	send(fd,buf,(i>MAXLEN)?MAXLEN-1:i,0);
+	bytes = send(conn->net,buf,(i>MAXLEN)?MAXLEN-1:i,0);
+
+	if (bytes==-1) {
+		dprintf(1,"wconsd[%i]: netprintf: send error %i",conn->id,GetLastError());
+	} else {
+		conn->net_bytes_tx += bytes;
+	}
+
 	return i;
 }
 
@@ -302,6 +312,8 @@ DWORD WINAPI wconsd_net_to_com(LPVOID lpParam)
 	fd_set s;
 	OVERLAPPED o={0};
 
+	dprintf(1,"wconsd: start wconsd_net_to_com\n");
+
 	o.hEvent = writeEvent;
 	while (WaitForSingleObject(threadTermEvent,0)!=WAIT_OBJECT_0) {
 		/* There's a bug in some versions of Windows which leads
@@ -346,6 +358,8 @@ DWORD WINAPI wconsd_com_to_net(LPVOID lpParam)
 
 	o.hEvent=readEvent;
 
+	dprintf(1,"wconsd: start wconsd_com_to_net\n");
+
 	while (WaitForSingleObject(threadTermEvent,0)!=WAIT_OBJECT_0) {
 		if (!ReadFile(hCom,buf,BUFSIZE,&size,&o)) {
 			if (GetLastError()==ERROR_IO_PENDING) {
@@ -366,8 +380,8 @@ DWORD WINAPI wconsd_com_to_net(LPVOID lpParam)
 	return 0;
 }
 
-void send_help(SOCKET cs) {
-	fdprintf(cs,"available commands:\r\n\n"
+void send_help(struct connection *conn) {
+	netprintf(conn,"available commands:\r\n\n"
 		    "  port, speed, data, parity, stop\r\n"
 		    "  help, status, copyright\r\n"
 		    "  open, close, autoclose\r\n"
@@ -377,14 +391,14 @@ void send_help(SOCKET cs) {
 void show_status(struct connection* conn) {
 	/* print the status to the net connection */
 
-	fdprintf(conn->net, "status:\r\n\n"
+	netprintf(conn, "status:\r\n\n"
 			"  port=%d  speed=%d  data=%d  parity=%d  stop=%d\r\n\n",
 			com_port, com_speed, com_data, com_parity, com_stop);
 
 	if(com_state) {
-		fdprintf(conn->net, "  state=open    autoclose=%d\r\n\n", com_autoclose);
+		netprintf(conn, "  state=open    autoclose=%d\r\n\n", com_autoclose);
 	} else {
-		fdprintf(conn->net, "  state=closed  autoclose=%d\r\n\n", com_autoclose);
+		netprintf(conn, "  state=closed  autoclose=%d\r\n\n", com_autoclose);
 	}
 }
 
@@ -392,9 +406,9 @@ void show_status(struct connection* conn) {
  * I thought that I would need this a lot, but it turns out that there
  * was a lot of duplicated code
  */
-int check_atoi(char *p,int old_value,SOCKET fd,char *error) {
+int check_atoi(char *p,int old_value,struct connection *conn,char *error) {
 	if (!p) {
-		fdprintf(fd,error);
+		netprintf(conn,error);
 		return old_value;
 	}
 
@@ -419,12 +433,12 @@ int process_menu_line(struct connection*conn, char *line) {
 
 	if (!strcmp(command, "help") || !strcmp(command, "?")) {
 		// help
-		send_help(cs);
+		send_help(conn);
 	} else if (!strcmp(command, "status")) {
 		// status
 		show_status(conn);
 	} else if (!strcmp(command, "copyright")) {	// copyright
-		fdprintf(conn->net,
+		netprintf(conn,
 		"  Copyright (c) 2008 by Hamish Coleman <hamish@zot.org>\r\n"
 		"                2003 by Benjamin Schweizer <gopher at h07 dot org>\r\n"
 		"                1998 by Stephen Early <Stephen.Early@cl.cam.ac.uk>\r\n"
@@ -445,13 +459,13 @@ int process_menu_line(struct connection*conn, char *line) {
 		"  Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.\r\n"
 		"\n");
 	} else if (!strcmp(command, "port")) {		// port
-		int new = check_atoi(parameter1,com_port,conn->net,"must specify a port\r\n");
+		int new = check_atoi(parameter1,com_port,conn,"must specify a port\r\n");
 
 		if (new >= 1 && new <= 16) {
 			com_port=new;
 		}
 	} else if (!strcmp(command, "speed")) {		// speed
-		com_speed = check_atoi(parameter1,com_port,conn->net,"must specify a speed\r\n");
+		com_speed = check_atoi(parameter1,com_port,conn,"must specify a speed\r\n");
 	} else if (!strcmp(command, "data")) {		// data
 		if (!strcmp(parameter1, "5")) {
 			com_data=5;
@@ -486,14 +500,14 @@ int process_menu_line(struct connection*conn, char *line) {
 		}
 		show_status(conn);
 	} else if (!strcmp(command, "open")) {		// open
-		int new = check_atoi(parameter1,com_port,conn->net,"must specify a port\r\n");
+		int new = check_atoi(parameter1,com_port,conn,"open default port\r\n");
 
 		if (new >= 1 && new <= 16) {
 			com_port=new;
 		}
 		if (com_state) {
 			/* port ist still open */
-			send(cs,"\r\n\n",3,0);
+			netprintf(conn,"\r\n\n");
 			/* signal to quit the menu */
 			conn->menuactive=0;
 			/* and return still running */
@@ -501,17 +515,17 @@ int process_menu_line(struct connection*conn, char *line) {
 		}
 
 		if (!open_com_port(&errcode)) {
-			send(cs,"\r\n\n",3,0);
+			netprintf(conn,"\r\n\n");
 			// signal to quit the menu
 			conn->menuactive=0;
 			/* and return still running */
 			return 1;
 		} else {
-			fdprintf(conn->net,"error: cannot open port\r\n\n");
+			netprintf(conn,"error: cannot open port\r\n\n");
 		}
 	} else if (!strcmp(command, "close")) {			// close
 		close_com_port();
-		fdprintf(conn->net,"info: actual com port closed\r\n\n");
+		netprintf(conn,"info: actual com port closed\r\n\n");
 	} else if (!strcmp(command, "autoclose")) {		// autoclose
 		if (!strcmp(parameter1, "true") || !strcmp(parameter1, "1") || !strcmp(parameter1, "yes")) {
 			com_autoclose=TRUE;
@@ -525,9 +539,23 @@ int process_menu_line(struct connection*conn, char *line) {
 		conn->menuactive=0;
 		/* and return not running */
 		return 0;
+	} else if (!strcmp(command, "show_conn_table")) {
+		int i;
+		netprintf(conn,
+				"slot A id M mTh net netTh serial serialTh netrx nettx\r\n");
+		for (i=0;i<MAXCONNECTIONS;i++) {
+			netprintf(conn,
+				"%4i %i %2i %i %3i %3i %5i %6i %8i %5i %5i\r\n",
+				i, connection[i].active, connection[i].id,
+				connection[i].menuactive, connection[i].menuThread,
+				connection[i].net, connection[i].netThread,
+				connection[i].serial, connection[i].serialThread,
+				connection[i].net_bytes_rx, connection[i].net_bytes_tx
+				);
+		}
 	} else {
 		/* other, unknown commands */
-		fdprintf(conn->net,"debug: line='%s', command='%s'\r\n\n",line,command);
+		netprintf(conn,"debug: line='%s', command='%s'\r\n\n",line,command);
 	}
 	/* return still running */
 	return 1;
@@ -541,9 +569,9 @@ int run_menu(struct connection * conn) {
 	int skip_lf=0;
 	unsigned long zero=0;
 
-	fdprintf(conn->net,"wconsd " VERSION " a serial port server\r\n\r\n");
-	send_help(conn->net);
-	send(conn->net,"> ",2,0);
+	netprintf(conn,"wconsd " VERSION " a serial port server\r\n\r\n");
+	send_help(conn);
+	netprintf(conn,"> ");
 
 	while (conn->menuactive) {
 		size=recv(conn->net,(void*)&buf,BUFSIZE,0);
@@ -558,6 +586,7 @@ int run_menu(struct connection * conn) {
 			ioctlsocket(conn->net,FIONBIO,&zero);
 			continue;
 		}
+		conn->net_bytes_rx+=size;
 
 		for (i = 0; i < size; i++) {
 			if (buf[i]==0) {
@@ -566,11 +595,11 @@ int run_menu(struct connection * conn) {
 			} else if (buf[i] == 127 || buf[i]==8) {
 				// backspace
 				if (linelen > 0) {
-					send(conn->net,"\x08",1,0);
+					netprintf(conn,"\x08 \x08");
 					linelen--;
 				} else {
 					/* if the linebuf is empty, ring the bell */
-					send(conn->net,"\x07",1,0);
+					netprintf(conn,"\x07");
 				}
 				continue;
 			} else if (buf[i] == 0x0d || buf[i]==0x0a) {
@@ -587,7 +616,7 @@ int run_menu(struct connection * conn) {
 
 				// echo the endofline
 				// FIXME - dont do this if linemode is on
-				send(conn->net,"\r\n",2,0);
+				netprintf(conn,"\r\n");
 
 				if (linelen!=0) {
 					int running;
@@ -600,7 +629,7 @@ int run_menu(struct connection * conn) {
 					}
 				}
 
-				send(conn->net,"> ",2,0);
+				netprintf(conn,"> ");
 				linelen=0;
 				continue;
 			} else if (buf[i]==0xff) {
@@ -617,9 +646,9 @@ int run_menu(struct connection * conn) {
 					linelen++;
 					// FIXME - dont echo if the other end is in
 					// linemode
-					send(conn->net,(void*)&buf[i],1,0);	/* echo */
+					netprintf(conn,"%c",buf[i]);	/* echo */
 				} else {
-					send(conn->net,"\x07",1,0); /* linebuf full bell */
+					netprintf(conn,"\x07"); /* linebuf full bell */
 				}
 				continue;
 			}
@@ -636,6 +665,7 @@ DWORD WINAPI thread_new_connection(LPVOID lpParam) {
 	int running=1;
 
 	while(running) {
+		dprintf(1,"wconsd[%i]: top of menu thread running loop\n",conn->id);
 		if (conn->menuactive) {
 			/* run the menu to ask the user questions */
 			running = run_menu(conn);
@@ -645,15 +675,25 @@ DWORD WINAPI thread_new_connection(LPVOID lpParam) {
 			netThread=CreateThread(NULL,0,wconsd_net_to_com,NULL,0,NULL);
 			comThread=CreateThread(NULL,0,wconsd_com_to_net,NULL,0,NULL);
 
-			/* since I dont wait for the threads, we finish here */
+			WaitForSingleObject(netThread,INFINITE);
+			WaitForSingleObject(comThread,INFINITE);
+
+			/*
+			 * since I wait for the threads and there currently
+			 * is no escape from the threads, we finish here
+			 */
 			running = 0;
 		}
 	}
 
 	/* cleanup */
-	dprintf(1,"wconsd: connection closed\n");
+	dprintf(1,"wconsd[%i]: connection closing\n",conn->id);
+
 	/* TODO print bytecounts */
 	/* maybe close file descriptors? */
+	shutdown(conn->net,SD_BOTH);
+	closesocket(conn->net);
+	conn->active=0;
 
 	return 0;
 }
@@ -674,7 +714,7 @@ static void wconsd_main(void)
 
 	/* clear out any bogus data in the connections table */
 	for (i=0;i<MAXCONNECTIONS;i++) {
-		connection[i].connected = 0;
+		connection[i].active = 0;
 	}
 
 	/* Main loop: wait for a connection, service it, repeat
@@ -702,11 +742,11 @@ static void wconsd_main(void)
 			}
 
 			dprintf(1,"wconsd: new connection from %08x\n",
-					sa.sin_addr.s_addr);
+					htonl(sa.sin_addr.s_addr));
 
 			/* search for an empty connection slot */
 			i=0;
-			while(connection[i].connected && i<MAXCONNECTIONS) {
+			while(connection[i].active && i<MAXCONNECTIONS) {
 				i++;
 			}
 			if (i==MAXCONNECTIONS) {
@@ -716,7 +756,8 @@ static void wconsd_main(void)
 				closesocket(as);
 				break;
 			}
-			connection[i].connected=1;	/* mark this entry busy */
+			connection[i].active=1;	/* mark this entry busy */
+			connection[i].id = next_connection_id++;
 			connection[i].menuactive=1;	/* start in the menu */
 			connection[i].menuThread=NULL;
 			connection[i].net=as;
@@ -726,7 +767,7 @@ static void wconsd_main(void)
 			connection[i].net_bytes_rx=0;
 			connection[i].net_bytes_tx=0;
 
-			dprintf(1,"wconsd: accepted connection id %i\n",i);
+			dprintf(1,"wconsd[%i]: accepted new connection\n",connection[i].id);
 
 
 			/* we successfully accepted the connection */
@@ -752,7 +793,7 @@ static void wconsd_main(void)
 			break;
 		case 2: /* connectionCloseEvent*/
 			/* The data connection has been broken */
-			dprintf(1,"wconsd: connection closed\n");
+			dprintf(1,"wconsd: connectionCloseEvent\n");
 			SetEvent(threadTermEvent);
 			WaitForSingleObject(netThread,INFINITE);
 			WaitForSingleObject(comThread,INFINITE);
@@ -1010,7 +1051,7 @@ int main(int argc, char **argv)
 		}
 	}
 
-	printf("wconsd: listen on port %i\n",default_tcpport);
+	dprintf(1,"wconsd: listen on port %i\n",default_tcpport);
 
 	// if we have decided to run as a console app..
 	if (console_application) {
