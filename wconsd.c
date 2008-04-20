@@ -64,6 +64,21 @@ SERVICE_STATUS_HANDLE wconsd_statusHandle;
 
 int debug_mode = 0;
 
+#define MAXCONNECTIONS	8
+
+struct connection {
+	int connected;
+	int menuactive;
+	HANDLE menuThread;
+	SOCKET net;
+	HANDLE netThread;
+	HANDLE serial;
+	HANDLE serialThread;
+	int net_bytes_rx;
+	int net_bytes_tx;
+};
+struct connection connection[MAXCONNECTIONS];
+
 /* 
  * output from OutputDebugStringA can be seen using sysinternals debugview
  * http://technet.microsoft.com/en-us/sysinternals/bb896647.aspx
@@ -239,8 +254,15 @@ DWORD wconsd_init(DWORD argc, LPSTR *argv, DWORD *specificError)
 		*specificError=WSAGetLastError();
 		return 9;
 	}
+#ifndef MS_WINDOWS
+	{
+	int one=1;
+	setsockopt(ls,SOL_SOCKET,SO_REUSEADDR,(void*)&one,sizeof(one));
+	}
+#endif
 	if (bind(ls,(struct sockaddr *)&sin,sizeof(sin))==SOCKET_ERROR) {
 		*specificError=WSAGetLastError();
+		dprintf(1,"wconsd: wconsd_init: failed to bind socket\n");
 		return 10;
 	}
 	if (listen(ls,1)==SOCKET_ERROR) {
@@ -585,6 +607,20 @@ int run_menu() {
 	return 0;
 }
 
+DWORD WINAPI thread_new_connection(LPVOID lpParam) {
+	HANDLE netThread=NULL, comThread=NULL;
+
+	// run the menu to ask the user questions
+	run_menu();
+
+	// they must have opened the com port, so start the threads
+	PurgeComm(hCom,PURGE_RXCLEAR|PURGE_RXABORT);
+	netThread=CreateThread(NULL,0,wconsd_net_to_com,NULL,0,NULL);
+	comThread=CreateThread(NULL,0,wconsd_com_to_net,NULL,0,NULL);
+
+	return 0;
+}
+
 static void wconsd_main(void)
 {
 	HANDLE wait_array[3];
@@ -593,6 +629,16 @@ static void wconsd_main(void)
 	SOCKET as;
 	HANDLE netThread=NULL, comThread=NULL;
 	long zero;
+
+	struct sockaddr_in sa;
+	int salen;
+
+	int i;
+
+	/* clear out any bogus data in the connections table */
+	for (i=0;i<MAXCONNECTIONS;i++) {
+		connection[i].connected = 0;
+	}
 
 	/* Main loop: wait for a connection, service it, repeat
 	 * until signalled that the service is terminating */
@@ -604,43 +650,72 @@ static void wconsd_main(void)
 		o=WaitForMultipleObjects(3,wait_array,FALSE,INFINITE);
 
 		switch (o-WAIT_OBJECT_0) {
-		case 0:
+		case 0: /* stopEvent */
 			run=FALSE;
 			ResetEvent(stopEvent);
 			break;
-		case 1: /* There is an incoming connection */
+		case 1: /* listenSocketEvent */
+			/* There is an incoming connection */
 			WSAResetEvent(listenSocketEvent);
-			as=accept(ls,NULL,NULL);
+			salen = sizeof(sa);
+			as=accept(ls,(struct sockaddr*)&sa,&salen);
 
-			dprintf(1,"wconsd: accepted new connection\n");
-
-			if (as!=INVALID_SOCKET) {
-				if (cs!=INVALID_SOCKET) {
-					/* Close down the existing connection and let the new one through */
-					SetEvent(threadTermEvent);
-					shutdown(cs,SD_BOTH);
-					WaitForSingleObject(netThread,INFINITE);
-					WaitForSingleObject(comThread,INFINITE);
-					CloseHandle(netThread);
-					CloseHandle(comThread);
-					closesocket(cs);
-					ResetEvent(connectionCloseEvent);
-					ResetEvent(threadTermEvent);
-				}
-				cs=as;
-				zero=0;
-				ioctlsocket(cs,FIONBIO,&zero);
-
-				// run the menu to ask the user questions
-				run_menu();
-
-				// they must have opened the com port, so start the threads
-				PurgeComm(hCom,PURGE_RXCLEAR|PURGE_RXABORT);
-				netThread=CreateThread(NULL,0,wconsd_net_to_com,NULL,0,NULL);
-				comThread=CreateThread(NULL,0,wconsd_com_to_net,NULL,0,NULL);
+			if (as==INVALID_SOCKET) {
+				break;
 			}
+
+			dprintf(1,"wconsd: new connection from %08x\n",
+					sa.sin_addr.s_addr);
+
+			/* search for an empty connection slot */
+			i=0;
+			while(connection[i].connected && i<MAXCONNECTIONS) {
+				i++;
+			}
+			if (i==MAXCONNECTIONS) {
+				dprintf(1,"wconsd: connection table overflow\n");
+				/* FIXME - properly reject the incoming connection */
+				/* for now, just close the socket */
+				closesocket(as);
+				break;
+			}
+			connection[i].connected=1;
+			connection[i].menuactive=1;
+			connection[i].menuThread=NULL;
+			connection[i].net=as;
+			connection[i].netThread=NULL;
+			connection[i].serial=INVALID_HANDLE_VALUE;
+			connection[i].serialThread=NULL;
+			connection[i].net_bytes_rx=0;
+			connection[i].net_bytes_tx=0;
+
+			dprintf(1,"wconsd: accepted connection id %i\n",i);
+
+
+			/* we successfully accepted the connection */
+
+			if (cs!=INVALID_SOCKET) {
+				/* There is an existing connected socket */
+				/* Close down the existing connection and let the new one through */
+				SetEvent(threadTermEvent);
+				shutdown(cs,SD_BOTH);
+				WaitForSingleObject(netThread,INFINITE);
+				WaitForSingleObject(comThread,INFINITE);
+				CloseHandle(netThread);
+				CloseHandle(comThread);
+				closesocket(cs);
+				ResetEvent(connectionCloseEvent);
+				ResetEvent(threadTermEvent);
+			}
+			cs=as;
+			zero=0;
+			ioctlsocket(cs,FIONBIO,&zero);
+
+			connection[i].menuThread = CreateThread(NULL,0,thread_new_connection,&connection[i],0,NULL);
+
 			break;
-		case 2: /* The data connection has been broken */
+		case 2: /* connectionCloseEvent*/
+			/* The data connection has been broken */
 			dprintf(1,"wconsd: connection closed\n");
 			SetEvent(threadTermEvent);
 			WaitForSingleObject(netThread,INFINITE);
@@ -907,7 +982,7 @@ int main(int argc, char **argv)
 		printf("wconsd: Console Application Mode (version %s)\n",VERSION);
 		r=wconsd_init(argc,argv,&err);
 		if (r!=0) {
-			printf("wconsd: debug: init failed, return code %d [%d]\n",r, err);
+			printf("wconsd: wconsd_init failed, return code %d [%d]\n",r, err);
 			return 1;
 		}
 		wconsd_main();
