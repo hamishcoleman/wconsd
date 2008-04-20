@@ -709,6 +709,7 @@ static void wconsd_main(void)
 
 	struct sockaddr_in sa;
 	int salen;
+	char buf[MAXLEN];
 
 	int i;
 
@@ -724,6 +725,8 @@ static void wconsd_main(void)
 	wait_array[2]=connectionCloseEvent;
 
 	while (run) {
+		dprintf(1,"wconsd: top of wconsd_main run loop\n");
+
 		o=WaitForMultipleObjects(3,wait_array,FALSE,INFINITE);
 
 		switch (o-WAIT_OBJECT_0) {
@@ -741,8 +744,13 @@ static void wconsd_main(void)
 				break;
 			}
 
-			dprintf(1,"wconsd: new connection from %08x\n",
+			if (!getnameinfo(&sa,salen,&buf,sizeof(buf),NULL,0,0)) {
+				dprintf(1,"wconsd: new connection from %08x\n",
 					htonl(sa.sin_addr.s_addr));
+			} else {
+				dprintf(1,"wconsd: new connection from %s\n",
+					&buf);
+			}
 
 			/* search for an empty connection slot */
 			i=0;
