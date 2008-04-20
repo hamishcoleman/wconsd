@@ -97,7 +97,7 @@ int dprintf(unsigned char severity, const char *fmt, ...) {
 		return 0;
 
 	va_start(args,fmt);
-	i=vsprintf(buf,fmt,args);
+	i=vsnprintf(buf,sizeof(buf),fmt,args);
 	va_end(args);
 
 	if (debug_mode) {
@@ -280,7 +280,7 @@ DWORD wconsd_init(DWORD argc, LPSTR *argv, DWORD *specificError)
 
 DWORD WINAPI wconsd_net_to_com(LPVOID lpParam)
 {
-	BYTE buf[BUFSIZE];
+	unsigned char buf[BUFSIZE];
 	DWORD size,wsize;
 	unsigned long zero=0;
 	fd_set s;
@@ -294,7 +294,7 @@ DWORD WINAPI wconsd_net_to_com(LPVOID lpParam)
 		 * around that bug. */
 		FD_SET(cs,&s);
 		select(0,&s,NULL,NULL,NULL);
-		size=recv(cs,buf,BUFSIZE,0);
+		size=recv(cs,(void*)&buf,BUFSIZE,0);
 		if (size==0) {
 			SetEvent(connectionCloseEvent);
 			return 0;
@@ -324,7 +324,7 @@ DWORD WINAPI wconsd_net_to_com(LPVOID lpParam)
 
 DWORD WINAPI wconsd_com_to_net(LPVOID lpParam)
 {
-	BYTE buf[BUFSIZE];
+	unsigned char buf[BUFSIZE];
 	DWORD size;
 	OVERLAPPED o={0};
 
@@ -344,7 +344,7 @@ DWORD WINAPI wconsd_com_to_net(LPVOID lpParam)
 			}
 		}
 		if (size>0) {
-			send(cs,buf,size,0);
+			send(cs,(void*)&buf,size,0);
 		}
 	}
 	return 0;
@@ -516,10 +516,8 @@ int process_menu_line(char *line) {
 }
 
 int run_menu() {
-	/* no comment */
-	BYTE buf[BUFSIZE], line[MAXLEN];
+	unsigned char buf[BUFSIZE], line[MAXLEN];
 	DWORD size, linelen=0;
-	char *buf2split=0, *cmdsplit=0;
 	BOOL menu=TRUE;
 	WORD i;
 
@@ -531,7 +529,7 @@ int run_menu() {
 	send_help(cs);	
 	send(cs,"> ",2,0);
 	while (menu) {
-		size=recv(cs,buf,BUFSIZE,0);
+		size=recv(cs,(void*)&buf,BUFSIZE,0);
 		if (size==0) {
 			SetEvent(connectionCloseEvent);
 			return 1;
@@ -573,7 +571,7 @@ int run_menu() {
 
 				if (linelen!=0) {
 					line[linelen]=0;	// ensure string is terminated
-					menu = process_menu_line(line);
+					menu = process_menu_line((char*)line);
 					if (!menu) {
 						return 0;
 					}
@@ -596,7 +594,7 @@ int run_menu() {
 					linelen++;
 					// FIXME - dont echo if the other end is in
 					// linemode
-					send(cs,&buf[i],1,0);		// echo the char
+					send(cs,(void*)&buf[i],1,0);		// echo the char
 				} else {
 					send(cs,"\x07",1,0); // bell
 				}
@@ -628,7 +626,7 @@ static void wconsd_main(void)
 	DWORD o;
 	SOCKET as;
 	HANDLE netThread=NULL, comThread=NULL;
-	long zero;
+	unsigned long zero=0;
 
 	struct sockaddr_in sa;
 	int salen;
@@ -708,7 +706,6 @@ static void wconsd_main(void)
 				ResetEvent(threadTermEvent);
 			}
 			cs=as;
-			zero=0;
 			ioctlsocket(cs,FIONBIO,&zero);
 
 			connection[i].menuThread = CreateThread(NULL,0,thread_new_connection,&connection[i],0,NULL);
