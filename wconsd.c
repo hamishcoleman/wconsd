@@ -419,14 +419,13 @@ int check_atoi(char *p,int old_value,struct connection *conn,char *error) {
 }
 
 int process_menu_line(struct connection*conn, char *line) {
-	DWORD errcode;
 	char *command;
 	char *parameter1;
 
 	/*
 	 * FIXME - non re-entrant code
 	 *
-	 * based on winelib, I am unsure if windows has strtok_r
+	 * my windows build environment does not have strtok_r
 	 * and thus I am running these two strtok as close as possible.
 	 * I am definitely not going to re-invent the wheel with my own
 	 * code.
@@ -503,6 +502,7 @@ int process_menu_line(struct connection*conn, char *line) {
 		}
 		show_status(conn);
 	} else if (!strcmp(command, "open")) {		// open
+		DWORD errcode;
 		int new = check_atoi(parameter1,com_port,conn,"open default port\r\n");
 
 		if (new >= 1 && new <= 16) {
@@ -545,12 +545,12 @@ int process_menu_line(struct connection*conn, char *line) {
 	} else if (!strcmp(command, "show_conn_table")) {
 		int i;
 		netprintf(conn,
-				"slot A id M mTh net netTh serial serialTh E netrx nettx\r\n");
+				"slot A id M mThr net  netTh serial serialTh E netrx nettx\r\n");
 		netprintf(conn,
-				"---- - -- - --- --- ----- ------ -------- - ----- -----\r\n");
+				"---- - -- - ---- ---- ----- ------ -------- - ----- -----\r\n");
 		for (i=0;i<MAXCONNECTIONS;i++) {
 			netprintf(conn,
-				"%-4i %i %2i %i %3i %3i %5i %6i %8i %i %5i %5i\r\n",
+				"%-4i %i %2i %i %4i %4i %5i %6i %8i %i %5i %5i\r\n",
 				i, connection[i].active, connection[i].id,
 				connection[i].menuactive, connection[i].menuThread,
 				connection[i].net, connection[i].netThread,
@@ -847,13 +847,18 @@ static void wconsd_main(void)
 				break;
 			}
 
+/* getnameinfo does not appear to be supported in my windows build environment */
+#ifdef GETNAMEINFO
 			if (!getnameinfo((struct sockaddr*)&sa,salen,buf,sizeof(buf),NULL,0,0)) {
 				dprintf(1,"wconsd: new connection from %08x\n",
 					htonl(sa.sin_addr.s_addr));
 			} else {
+#endif
 				dprintf(1,"wconsd: new connection from %s\n",
 					&buf);
+#ifdef GETNAMEINFO
 			}
+#endif
 
 			/* search for an empty connection slot */
 			i=0;
@@ -1168,10 +1173,10 @@ int main(int argc, char **argv)
 	// if we have decided to run as a console app..
 	if (console_application) {
 		int r;
-		printf("wconsd: Console Application Mode (version %s)\n",VERSION);
+		dprintf(1,"wconsd: Console Application Mode (version %s)\n",VERSION);
 		r=wconsd_init(argc,argv,&err);
 		if (r!=0) {
-			printf("wconsd: wconsd_init failed, return code %d [%d]\n",r, err);
+			dprintf(1,"wconsd: wconsd_init failed, return code %d [%l]\n",r, err);
 			return 1;
 		}
 		wconsd_main();

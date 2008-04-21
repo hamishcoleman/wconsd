@@ -5,7 +5,7 @@ get:
 	pscp 192.168.1.1:s/src/wconsd/*.c ./
 
 put:
-	pscp ./*.c 192.168.1.1:s/src/wconsd/
+	pscp ./*.exe ./*.c 192.168.1.1:s/src/wconsd/
 
 
 wconsd.exe: wconsd.c
