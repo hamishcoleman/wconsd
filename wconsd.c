@@ -30,7 +30,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-#define VERSION "0.1.6"
+#define VERSION "0.2"
 
 /* Size of buffers for send and receive */
 #define BUFSIZE 1024
