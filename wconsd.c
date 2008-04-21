@@ -30,7 +30,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-#define VERSION "0.2"
+#define VERSION "0.2.1"
 
 /* Size of buffers for send and receive */
 #define BUFSIZE 1024
@@ -490,13 +490,15 @@ DWORD WINAPI wconsd_net_to_com(LPVOID lpParam)
 
 		/*
 		 * Scan for CR NUL sequences and uncook them
-		 * TODO - maybe implement a "cooked" mode to bypass this *
+		 * it also appears that I need to uncook CR LF sequences
+		 * TODO - implement a "cooked" mode to bypass all this
+		 * mangling
 		 */
 		pbuf=buf;
 		bytes_to_scan=size;
 		while ((pbuf=memchr(pbuf,0x0d,bytes_to_scan))!=NULL) {
 			pbuf++;
-			if (*pbuf!=0x00) {
+			if (*pbuf!=0x00&&*pbuf!=0x0a) {
 				continue;
 			}
 
@@ -768,7 +770,8 @@ int run_menu(struct connection * conn) {
 	/* IAC WILL ECHO */
 	/* IAC WILL suppress go ahead */
 	/* IAC WILL status */
-	netprintf(conn,"\xff\xfb\x01\xff\xfb\x03\xff\xfb\x05");
+	/* IAC WONT linemode */
+	netprintf(conn,"\xff\xfb\x01\xff\xfb\x03\xff\xfb\x05\xff\xfc\x22");
 
 	netprintf(conn,"\r\nwconsd serial port server (version %s)\r\n\r\n",VERSION);
 	send_help(conn);
