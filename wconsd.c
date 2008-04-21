@@ -30,7 +30,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-#define VERSION "0.2.1"
+#define VERSION "0.2.2"
 
 /* Size of buffers for send and receive */
 #define BUFSIZE 1024
@@ -66,7 +66,7 @@ int debug_mode = 0;
 
 #define MAXCONNECTIONS	8
 
-int next_connection_id = 0;	/* lifetime unique connection id */
+int next_connection_id = 1;	/* lifetime unique connection id */
 int next_connection_slot = 0;	/* next slot to look at for new connection */
 struct connection {
 	int active;		/* an active entry cannot be reused */
@@ -205,7 +205,24 @@ DWORD open_com_port(struct connection *conn, DWORD *specificError) {
 /* close the com port */
 void close_com_port(struct connection *conn) {
 	CloseHandle(conn->serial);
+	conn->serial=INVALID_HANDLE_VALUE;
 	conn->serialconnected=0;
+}
+
+/*
+ * Given an active connection, force close its
+ * serial port. waiting for all relevant resources
+ */
+void close_serial_connection(struct connection *conn) {
+	if (!conn->active) {
+		dprintf(1,"wconsd: closing closed connection %i\n",conn->id);
+		return;
+	}
+	conn->menuactive=1;
+	close_com_port(conn);
+	WaitForSingleObject(conn->serialThread,INFINITE);
+	CloseHandle(conn->serialThread);
+	conn->serialThread=NULL;
 }
 
 
@@ -437,7 +454,7 @@ DWORD WINAPI wconsd_net_to_com(LPVOID lpParam)
 	dprintf(1,"wconsd[%i]: start wconsd_net_to_com\n",conn->id);
 
 	o.hEvent = writeEvent;
-	while (conn->netconnected) {
+	while (conn->netconnected && conn->serialconnected) {
 		/* There's a bug in some versions of Windows which leads
 		 * to recv() returning -1 and indicating error WSAEWOULDBLOCK,
 		 * even on a blocking socket. This select() is here to work
@@ -573,10 +590,10 @@ void send_help(struct connection *conn) {
 		"\r\n"
 		"NOTE: these commands will change in the next version\r\n\n"
 		"available commands:\r\n\n"
-		"  port, speed, data, parity, stop\r\n"
-		"  help, status, copyright\r\n"
-		"  open, close, autoclose\r\n"
-		"  show_conn_table\r\n"
+		"  port speed data parity stop\r\n"
+		"  help status copyright\r\n"
+		"  open close autoclose\r\n"
+		"  show_conn_table kill_conn\r\n"
 		"  quit\r\n");
 }
 
@@ -607,7 +624,7 @@ int check_atoi(char *p,int old_value,struct connection *conn,char *error) {
 	return atoi(p);
 }
 
-int process_menu_line(struct connection*conn, char *line) {
+void process_menu_line(struct connection*conn, char *line) {
 	char *command;
 	char *parameter1;
 
@@ -702,21 +719,19 @@ int process_menu_line(struct connection*conn, char *line) {
 			netprintf(conn,"\r\n\n");
 			/* signal to quit the menu */
 			conn->menuactive=0;
-			/* and return still running */
-			return 1;
+			return;
 		}
 
 		if (!open_com_port(conn,&errcode)) {
 			netprintf(conn,"\r\n\n");
 			// signal to quit the menu
 			conn->menuactive=0;
-			/* and return still running */
-			return 1;
+			return;
 		} else {
 			netprintf(conn,"error: cannot open port\r\n\n");
 		}
 	} else if (!strcmp(command, "close")) {			// close
-		close_com_port(conn);
+		close_serial_connection(conn);
 		netprintf(conn,"info: actual com port closed\r\n\n");
 	} else if (!strcmp(command, "autoclose")) {		// autoclose
 		if (!strcmp(parameter1, "true") || !strcmp(parameter1, "1") || !strcmp(parameter1, "yes")) {
@@ -731,8 +746,7 @@ int process_menu_line(struct connection*conn, char *line) {
 		closesocket(conn->net);
 		conn->net=INVALID_SOCKET;
 		conn->netconnected=0;
-		/* and return not running */
-		return 0;
+		return;
 	} else if (!strcmp(command, "show_conn_table")) {
 		int i;
 		netprintf(conn,
@@ -750,15 +764,31 @@ int process_menu_line(struct connection*conn, char *line) {
 				connection[i].net_bytes_rx, connection[i].net_bytes_tx
 				);
 		}
+	} else if (!strcmp(command, "kill_conn")) {
+		int connid = check_atoi(parameter1,0,conn,"must specify a connection id\r\n");
+		if (connid==0 || connid>next_connection_id) {
+			netprintf(conn,"Connection ID %i out of range\r\n",connid);
+			return;
+		}
+
+		int i=0;
+		while(connection[i].id!=connid && i<MAXCONNECTIONS) {
+			i++;
+		}
+		if (i>=MAXCONNECTIONS) {
+			netprintf(conn,"Connection ID %i not found\r\n",connid);
+			return;
+		}
+
+		close_serial_connection(&connection[i]);
+		netprintf(conn,"Connection ID %i serial port closed\r\n",connid);
 	} else {
 		/* other, unknown commands */
 		netprintf(conn,"debug: line='%s', command='%s'\r\n\n",line,command);
 	}
-	/* return still running */
-	return 1;
 }
 
-int run_menu(struct connection * conn) {
+void run_menu(struct connection * conn) {
 	unsigned char buf[BUFSIZE+5];	/* ensure there is room for our kludge telnet options */
 	unsigned char line[MAXLEN];
 	DWORD size, linelen=0;
@@ -787,7 +817,7 @@ int run_menu(struct connection * conn) {
 			closesocket(conn->net);
 			conn->net=INVALID_SOCKET;
 			conn->netconnected=0;
-			return 0; /* signal running=0 */
+			return;
 		}
 		if (size==SOCKET_ERROR) {
 			dprintf(1,"wconsd[%i]: socket error\n",conn->id);
@@ -823,13 +853,12 @@ int run_menu(struct connection * conn) {
 					netprintf(conn,"\r\n");
 
 				if (linelen!=0) {
-					int running;
 					line[linelen]=0;	// ensure string is terminated
 
-					running = process_menu_line(conn,(char*)line);
+					process_menu_line(conn,(char*)line);
 					if (!conn->menuactive) {
 						/* exiting the menu.. */
-						return running;
+						return;
 					}
 				}
 
@@ -884,7 +913,6 @@ int run_menu(struct connection * conn) {
 	}
 
 	/* not reached */
-	return 0;
 }
 
 DWORD WINAPI thread_new_connection(LPVOID lpParam) {
@@ -926,9 +954,7 @@ DWORD WINAPI thread_new_connection(LPVOID lpParam) {
 	shutdown(conn->net,SD_BOTH);
 	closesocket(conn->net);
 
-	close_com_port(conn);
-	WaitForSingleObject(conn->serialThread,INFINITE);
-	CloseHandle(conn->serialThread);
+	close_serial_connection(conn);
 
 	conn->active=0;
 
