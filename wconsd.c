@@ -30,17 +30,17 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-#define VERSION "0.1.5"
+#define VERSION "0.1.6"
 
 /* Size of buffers for send and receive */
 #define BUFSIZE 1024
 #define MAXLEN 1024
 
 /* Sockets for listening and communicating */
-SOCKET ls=INVALID_SOCKET,cs=INVALID_SOCKET;
+SOCKET ls=INVALID_SOCKET;
 
 /* Event objects */
-HANDLE stopEvent, connectionCloseEvent, threadTermEvent;
+HANDLE stopEvent;
 HANDLE readEvent, writeEvent;
 WSAEVENT listenSocketEvent;
 
@@ -191,7 +191,7 @@ DWORD open_com_port(struct connection *conn, DWORD *specificError) {
 
 	timeouts.ReadIntervalTimeout=20;
 	timeouts.ReadTotalTimeoutMultiplier=0;
-	timeouts.ReadTotalTimeoutConstant=50;
+	timeouts.ReadTotalTimeoutConstant=2000;
 	timeouts.WriteTotalTimeoutMultiplier=0;
 	timeouts.WriteTotalTimeoutConstant=0;
 	if (!SetCommTimeouts(conn->serial, &timeouts)) {
@@ -251,17 +251,6 @@ DWORD wconsd_init(DWORD argc, LPSTR *argv, DWORD *specificError)
 		*specificError=GetLastError();
 		return 3;
 	}
-	// Create the event object used to signal connection close
-	connectionCloseEvent = CreateEvent(NULL,TRUE,FALSE,NULL);
-	if (connectionCloseEvent==NULL) {
-		*specificError=GetLastError();
-		return 4;
-	}
-	threadTermEvent = CreateEvent(NULL,TRUE,FALSE,NULL);
-	if (threadTermEvent==NULL) {
-		*specificError=GetLastError();
-		return 5;
-	}
 	// Event objects for overlapped IO
 	readEvent = CreateEvent(NULL,TRUE,FALSE,NULL);
 	if (readEvent==NULL) {
@@ -313,11 +302,133 @@ DWORD wconsd_init(DWORD argc, LPSTR *argv, DWORD *specificError)
 	return 0;
 }
 
+/*
+ * given a buffer starting with 0xff, process the telnet options and return
+ * the number of bytes to skip
+ */
+int process_telnet_option(struct connection*conn, unsigned char *buf) {
+
+	switch (buf[1]) {
+		case 0xf0:	/* suboption end */
+		case 241:	/* NOP */
+		case 242:	/* Data Mark */
+			dprintf(1,"wconsd[%i]: option IAC %i\n",conn->id,buf[1]);
+			return 2;
+		case 243:	/* Break */
+			/* TODO */
+			dprintf(1,"wconsd[%i]: break not supported\n",conn->id);
+			return 2;
+		case 244:	/* Interrupt */
+			dprintf(1,"wconsd[%i]: option IAC Interrupt\n",conn->id,buf[1]);
+			conn->menuactive=1;
+			return 2;
+		case 245:	/* abort output */
+			dprintf(1,"wconsd[%i]: option IAC %i\n",conn->id,buf[1]);
+			return 2;
+		case 246:	/* are you there */
+			dprintf(1,"wconsd[%i]: option IAC AYT\n",conn->id);
+			netprintf(conn,"yes\r\n");
+			return 2;
+		case 247:	/* erase character */
+		case 248:	/* erase line */
+		case 249:	/* go ahead */
+			dprintf(1,"wconsd[%i]: option IAC %i\n",conn->id,buf[1]);
+			return 2;
+		case 0xfa:	/* suboption begin */
+			if (buf[3]==0) {
+				/*
+				 * I dont expect us to get any IS statements ...
+				 * and if we do, I'm going to need to rewrite the
+				 * way chars are absorbed
+				 */
+				dprintf(1,"wconsd[%i]: option IAC SB %i IS\n",conn->id,buf[2]);
+				return 4;
+			} else if (buf[3]>1) {
+				dprintf(1,"wconsd[%i]: option IAC SB %i error\n",conn->id,buf[2]);
+				return 4;
+			}
+			dprintf(1,"wconsd[%i]: option IAC SB %i SEND\n",conn->id,buf[2]);
+			switch (buf[2]) {
+				case 5:	/* STATUS */
+					netprintf(conn,"%s%c%s%s%s",
+						"\xff\xfa\x05",
+						0,
+						"\xfb\x05",
+						conn->option_echo?"\xfb\x01":"",
+						"\xff\xf0");
+			}
+			return 6;
+		case 0xfb:	/* WILL */
+			dprintf(1,"wconsd[%i]: option IAC WILL %i\n",conn->id,buf[2]);
+			return 3;
+		case 0xfc:	/* WONT */
+			dprintf(1,"wconsd[%i]: option IAC WONT %i\n",conn->id,buf[2]);
+			return 3;
+		case 0xfd:	/* DO */
+			switch (buf[2]) {
+				case 0x01:	/* ECHO */
+					dprintf(1,"wconsd[%i]: DO ECHO\n",conn->id);
+					conn->option_echo=1;
+					break;
+				case 0x03:	/* suppress go ahead */
+					dprintf(1,"wconsd[%i]: DO suppress go ahead\n",conn->id);
+					break;
+			}
+			return 3;
+		case 0xfe:	/* DONT */
+			switch (buf[2]) {
+				case 0x01:	/* ECHO */
+					dprintf(1,"wconsd[%i]: DONT ECHO\n",conn->id);
+					conn->option_echo=0;
+					break;
+				default:
+					dprintf(1,"wconsd[%i]: option IAC DONT %i\n",conn->id,buf[2]);
+			}
+			return 3;
+		case 0xff:	/* send ff */
+			return 1;
+		default:
+			dprintf(1,"wconsd[%i]: option IAC %i %i\n",conn->id,buf[1],buf[2]);
+	}
+
+	/* not normally reached */
+	return 3;
+}
+
+/*
+ * Wrap up all the crazy file writing process in a function
+ */
+int serial_writefile(struct connection *conn,OVERLAPPED *o,unsigned char *buf,int size) {
+	DWORD wsize;
+
+	if (!conn->serialconnected) {
+		dprintf(1,"wconsd[%i]: serial_writefile but serial closed\n",conn->id);
+		return 0;
+	}
+
+	if (!WriteFile(conn->serial,buf,size,&wsize,o)) {
+		if (GetLastError()==ERROR_IO_PENDING) {
+			// Wait for it...
+			if (!GetOverlappedResult(conn->serial,o,&wsize,TRUE)) {
+				dprintf(1,"wconsd[%i]: Error %d (overlapped) writing to COM port\n",conn->id,GetLastError());
+			}
+		} else {
+			dprintf(1,"wconsd[%i]: Error %d writing to COM port\n",conn->id,GetLastError());
+		}
+	}
+	if (wsize!=size) {
+		dprintf(1,"wconsd[%i]: Eeek! WriteFile: wrote %d of %d\n",conn->id,wsize,size);
+	}
+	return wsize;
+}
+
 DWORD WINAPI wconsd_net_to_com(LPVOID lpParam)
 {
 	struct connection * conn = (struct connection*)lpParam;
 	unsigned char buf[BUFSIZE];
-	DWORD size,wsize;
+	unsigned char *pbuf;
+	int bytes_to_scan;
+	DWORD size;
 	unsigned long zero=0;
 	fd_set s;
 	struct timeval tv;
@@ -336,12 +447,11 @@ DWORD WINAPI wconsd_net_to_com(LPVOID lpParam)
 		 * above statement is still true
 		 */
 		FD_SET(conn->net,&s);
-		tv.tv_sec = 5;
+		tv.tv_sec = 2;
 		tv.tv_usec = 0;
 		select(0,&s,NULL,NULL,&tv);
 		size=recv(conn->net,(void*)&buf,BUFSIZE,0);
 		if (size==0) {
-			SetEvent(connectionCloseEvent);
 			closesocket(conn->net);
 			conn->net=INVALID_SOCKET;
 			conn->netconnected=0;
@@ -355,13 +465,52 @@ DWORD WINAPI wconsd_net_to_com(LPVOID lpParam)
 		}
 		conn->net_bytes_rx+=size;
 
-		/* FIXME - find CR NUL and remove the NUL */
-		/* FIXME - process and remove telnet options at this point */
+		/*
+		 * Scan for telnet options and process then remove them
+		 * This loop is reasonably fast if there are no options,
+		 * but recursively slow if there are options
+		 */
+		pbuf=buf;
+		bytes_to_scan=size;
+		while ((pbuf=memchr(pbuf,0xff,bytes_to_scan))!=NULL) {
+			int skip = process_telnet_option(conn, pbuf);
+
+			bytes_to_scan = size-(pbuf-buf)+skip;
+			size -= skip;
+
+			memmove(pbuf,pbuf+skip,bytes_to_scan);
+
+			/*
+			 * hack to skip quoted quotes
+			 */
+			if (skip==1) {
+				pbuf++;
+			}
+		}
+
+		/*
+		 * Scan for CR NUL sequences and uncook them
+		 * TODO - maybe implement a "cooked" mode to bypass this *
+		 */
+		pbuf=buf;
+		bytes_to_scan=size;
+		while ((pbuf=memchr(pbuf,0x0d,bytes_to_scan))!=NULL) {
+			pbuf++;
+			if (*pbuf!=0x00) {
+				continue;
+			}
+
+			bytes_to_scan = size-(pbuf-buf)+1;
+			size -= 1;
+			memmove(pbuf,pbuf+1,bytes_to_scan);
+		}
+
+		/* TODO - emulate ciscos ctrl-^,x sequence for exit to menu */
 
 		if (conn->menuactive) {
 			/* TODO - if we are in menu mode, hook into the menu here */
-			dprintf(1,"wconsd[%i]: unexpected menuactive\n",conn->id);
-			continue;
+			// dprintf(1,"wconsd[%i]: unexpected menuactive\n",conn->id);
+			return 0;
 		}
 
 		if (!conn->serialconnected) {
@@ -369,19 +518,11 @@ DWORD WINAPI wconsd_net_to_com(LPVOID lpParam)
 			continue;
 		}
 
-		if (!WriteFile(conn->serial,buf,size,&wsize,&o)) {
-			if (GetLastError()==ERROR_IO_PENDING) {
-				// Wait for it...
-				if (!GetOverlappedResult(conn->serial,&o,&wsize,TRUE)) {
-					dprintf(1,"wconsd: Error %d (overlapped) writing to COM port\n",GetLastError());
-				}
-			} else {
-				dprintf(1,"wconsd: Error %d writing to COM port\n",GetLastError());
-			}
-		}
-		if (wsize!=size) {
-			dprintf(1,"wconsd: Eeek! WriteFile: wrote %d of %d\n",wsize,size);
-		}
+		/*
+		 * we could check the return value to see if there was a
+		 * short write, but what would our options be?
+		 */
+		serial_writefile(conn,&o,buf,size);
 	}
 	dprintf(1,"wconsd[%i]: finish wconsd_net_to_com\n",conn->id);
 	return 0;
@@ -407,16 +548,16 @@ DWORD WINAPI wconsd_com_to_net(LPVOID lpParam)
 				}
 			} else {
 				dprintf(1,"wconsd[%i]: Error %d reading from COM port\n",conn->id,GetLastError());
-				SetEvent(connectionCloseEvent);
 				conn->serialconnected=0;
 				continue;
 			}
 		}
-		if (!conn->netconnected) {
-			dprintf(1,"wconsd[%i]: data to send, but net closed\n",conn->id);
-			continue;
-		}
+		/* We might not have any data if the ReadFile timed out */
 		if (size>0) {
+			if (!conn->netconnected) {
+				dprintf(1,"wconsd[%i]: data to send, but net closed\n",conn->id);
+				continue;
+			}
 			send(conn->net,(void*)&buf,size,0);
 			conn->net_bytes_tx+=size;
 		}
@@ -584,7 +725,6 @@ int process_menu_line(struct connection*conn, char *line) {
 		show_status(conn);
 	} else if (!strcmp(command, "quit")) {
 		// quit the connection
-		SetEvent(connectionCloseEvent);
 		conn->menuactive=0;
 		closesocket(conn->net);
 		conn->net=INVALID_SOCKET;
@@ -616,87 +756,6 @@ int process_menu_line(struct connection*conn, char *line) {
 	return 1;
 }
 
-int process_telnet_option(struct connection*conn, unsigned char *buf) {
-
-	switch (buf[1]) {
-		case 0xf0:	/* suboption end */
-		case 241:	/* NOP */
-		case 242:	/* Data Mark */
-			dprintf(1,"wconsd[%i]: option IAC %i\n",conn->id,buf[1]);
-			return 1;
-		case 243:	/* Break */
-			/* TODO */
-			dprintf(1,"wconsd[%i]: break not supported\n",conn->id);
-			return 1;
-		case 244:	/* suspend */
-		case 245:	/* abort output */
-			dprintf(1,"wconsd[%i]: option IAC %i\n",conn->id,buf[1]);
-			return 1;
-		case 246:	/* are you there */
-			dprintf(1,"wconsd[%i]: option IAC AYT\n",conn->id);
-			netprintf(conn,"yes\r\n");
-			return 1;
-		case 247:	/* erase character */
-		case 248:	/* erase line */
-		case 249:	/* go ahead */
-			dprintf(1,"wconsd[%i]: option IAC %i\n",conn->id,buf[1]);
-			return 1;
-		case 0xfa:	/* suboption begin */
-			if (buf[3]==0) {
-				/*
-				 * I dont expect us to get any IS statements ...
-				 * and if we do, I'm going to need to rewrite the
-				 * way chars are absorbed
-				 */
-				dprintf(1,"wconsd[%i]: option IAC SB %i IS\n",conn->id,buf[2]);
-				return 3;
-			} else if (buf[3]>1) {
-				dprintf(1,"wconsd[%i]: option IAC SB %i error\n",conn->id,buf[2]);
-				return 3;
-			}
-			dprintf(1,"wconsd[%i]: option IAC SB %i SEND\n",conn->id,buf[2]);
-			switch (buf[2]) {
-				case 5:	/* STATUS */
-					netprintf(conn,"%s%c%s%s%s",
-						"\xff\xfa\x05",
-						0,
-						"\xfb\x05",
-						conn->option_echo?"\xfb\x01":"",
-						"\xff\xf0");
-			}
-			return 5;
-		case 0xfb:	/* WILL */
-			dprintf(1,"wconsd[%i]: option IAC WILL %i\n",conn->id,buf[2]);
-			return 2;
-		case 0xfc:	/* WONT */
-			dprintf(1,"wconsd[%i]: option IAC WONT %i\n",conn->id,buf[2]);
-			return 2;
-		case 0xfd:	/* DO */
-			switch (buf[2]) {
-				case 0x01:	/* ECHO */
-					dprintf(1,"wconsd[%i]: DO ECHO\n",conn->id);
-					conn->option_echo=1;
-					break;
-				case 0x03:	/* suppress go ahead */
-					dprintf(1,"wconsd[%i]: DO suppress go ahead\n",conn->id);
-					break;
-			}
-			return 2;
-		case 0xfe:	/* DONT */
-			dprintf(1,"wconsd[%i]: option IAC DONT %i\n",conn->id,buf[2]);
-			return 2;
-		case 0xff:	/* send ff */
-			/* TODO - work out how to support this */
-			dprintf(1,"wconsd[%i]: does not support quoted 0xff\n",conn->id);
-			return 1;
-		default:
-			dprintf(1,"wconsd[%i]: option IAC %i %i\n",conn->id,buf[1],buf[2]);
-	}
-
-	/* not normally reached */
-	return 2;
-}
-
 int run_menu(struct connection * conn) {
 	unsigned char buf[BUFSIZE+5];	/* ensure there is room for our kludge telnet options */
 	unsigned char line[MAXLEN];
@@ -725,7 +784,6 @@ int run_menu(struct connection * conn) {
 			closesocket(conn->net);
 			conn->net=INVALID_SOCKET;
 			conn->netconnected=0;
-			SetEvent(connectionCloseEvent);
 			return 0; /* signal running=0 */
 		}
 		if (size==SOCKET_ERROR) {
@@ -782,6 +840,16 @@ int run_menu(struct connection * conn) {
 				// telnet option packet
 
 				/*
+				 * some magic to ignore quoted quotes
+				 * this will go away when we use net_to_com
+				 * to give us our data buffer
+				 */
+				if (buf[i+1]==0xff) {
+					i++;
+					continue;
+				}
+
+				/*
 				 * Note that we avoid accessing outside the buffer
 				 * by ensuring that the buffer is larger than
 				 * the largest recv
@@ -789,7 +857,11 @@ int run_menu(struct connection * conn) {
 				 * this doesnt help us if there is a split buffer from
 				 * the client
 				 */
-				i+=process_telnet_option(conn,&buf[i]);
+				/*
+				 * our for loop is already performing one increment,
+				 * so subtract one from the returned value
+				 */
+				i+=process_telnet_option(conn,&buf[i])-1;
 				continue;
 			} else {
 				// other chars
@@ -814,28 +886,32 @@ int run_menu(struct connection * conn) {
 
 DWORD WINAPI thread_new_connection(LPVOID lpParam) {
 	struct connection * conn = (struct connection*)lpParam;
-	int running=1;
 
 	while(conn->netconnected) {
 		dprintf(1,"wconsd[%i]: top of menu thread running loop\n",conn->id);
-		if (conn->menuactive && conn->netconnected) {
+
+		/* basically, if we have exited the net_to_com thread and have
+		 * still got net connectivity, we are in the menu
+		 */
+		conn->menuactive=1;
+
+		if ((conn->menuactive && conn->netconnected) || !conn->serialconnected) {
 			/* run the menu to ask the user questions */
-			running = run_menu(conn);
+			run_menu(conn);
 		}
 		if (!conn->menuactive && conn->netconnected && conn->serialconnected) {
 			/* they must have opened the com port, so start the threads */
 			PurgeComm(conn->serial,PURGE_RXCLEAR|PURGE_RXABORT);
 			conn->netThread=CreateThread(NULL,0,wconsd_net_to_com,conn,0,NULL);
-			conn->serialThread=CreateThread(NULL,0,wconsd_com_to_net,conn,0,NULL);
+			if (conn->serialThread==NULL) {
+				/* we might already have a com_to_net thread */
+				conn->serialThread=CreateThread(NULL,0,wconsd_com_to_net,conn,0,NULL);
+			}
 
 			WaitForSingleObject(conn->netThread,INFINITE);
-			WaitForSingleObject(conn->serialThread,INFINITE);
+			CloseHandle(conn->netThread);
+			conn->netThread=NULL;
 
-			/*
-			 * since I wait for the threads and there currently
-			 * is no escape from the threads, we finish here
-			 */
-			running = 0;
 		}
 	}
 
@@ -844,13 +920,13 @@ DWORD WINAPI thread_new_connection(LPVOID lpParam) {
 
 	/* TODO print bytecounts */
 	/* maybe close file descriptors? */
-	if (com_autoclose) {
-		close_com_port(conn);
-	}
-	CloseHandle(conn->netThread);
-	CloseHandle(conn->serialThread);
 	shutdown(conn->net,SD_BOTH);
 	closesocket(conn->net);
+
+	close_com_port(conn);
+	WaitForSingleObject(conn->serialThread,INFINITE);
+	CloseHandle(conn->serialThread);
+
 	conn->active=0;
 
 	/* TODO - who closes menuThread ? */
@@ -859,7 +935,7 @@ DWORD WINAPI thread_new_connection(LPVOID lpParam) {
 
 static void wconsd_main(void)
 {
-	HANDLE wait_array[3];
+	HANDLE wait_array[2];
 	BOOL run=TRUE;
 	DWORD o;
 	SOCKET as;
@@ -880,12 +956,11 @@ static void wconsd_main(void)
 	 * until signalled that the service is terminating */
 	wait_array[0]=stopEvent;
 	wait_array[1]=listenSocketEvent;
-	wait_array[2]=connectionCloseEvent;
 
 	while (run) {
 		dprintf(1,"wconsd: top of wconsd_main run loop\n");
 
-		o=WaitForMultipleObjects(3,wait_array,FALSE,INFINITE);
+		o=WaitForMultipleObjects(2,wait_array,FALSE,INFINITE);
 
 		switch (o-WAIT_OBJECT_0) {
 		case 0: /* stopEvent */
@@ -950,43 +1025,15 @@ static void wconsd_main(void)
 
 			/* we successfully accepted the connection */
 
-			if (cs!=INVALID_SOCKET) {
-				/* There is an existing connected socket */
-				/* Close down the existing connection and let the new one through */
-				SetEvent(threadTermEvent);
-				shutdown(cs,SD_BOTH);
-				closesocket(cs);
-				ResetEvent(connectionCloseEvent);
-				ResetEvent(threadTermEvent);
-			}
-			/* cs=as; */
-
 			ioctlsocket(connection[i].net,FIONBIO,&zero);
 
 			connection[i].menuThread = CreateThread(NULL,0,thread_new_connection,&connection[i],0,NULL);
 
 			break;
-		case 2: /* connectionCloseEvent*/
-			/* The data connection has been broken */
-			dprintf(1,"wconsd: connectionCloseEvent\n");
-			SetEvent(threadTermEvent);
-			if (cs!=INVALID_SOCKET) {
-				shutdown(cs,SD_BOTH);
-				closesocket(cs);
-				cs=INVALID_SOCKET;
-			}
-			ResetEvent(connectionCloseEvent);
-			ResetEvent(threadTermEvent);
-			break;
 		default:
 			run=FALSE; // Stop the service - I want to get off!
 			break;
 		}
-	}
-
-	if (cs!=INVALID_SOCKET) {
-		shutdown(cs,SD_BOTH);
-		closesocket(cs);
 	}
 
 	/* TODO - look through the connection table and close everything */
