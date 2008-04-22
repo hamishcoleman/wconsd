@@ -332,8 +332,13 @@ int process_telnet_option(struct connection*conn, unsigned char *buf) {
 			dprintf(1,"wconsd[%i]: option IAC %i\n",conn->id,buf[1]);
 			return 2;
 		case 243:	/* Break */
-			/* TODO */
-			dprintf(1,"wconsd[%i]: break not supported\n",conn->id);
+			if (conn->serialconnected) {
+				dprintf(1,"wconsd[%i]: send break\n",conn->id);
+				Sleep(1000);
+				SetCommBreak(conn->serial);
+				Sleep(1000);
+				ClearCommBreak(conn->serial);
+			}
 			return 2;
 		case 244:	/* Interrupt */
 			dprintf(1,"wconsd[%i]: option IAC Interrupt\n",conn->id,buf[1]);
@@ -779,7 +784,7 @@ void process_menu_line(struct connection*conn, char *line) {
 			netprintf(conn,"Connection ID %i not found\r\n",connid);
 			return;
 		}
-
+		netprintf(&connection[i],"Serial Connection Closed by Connection ID %i\r\n",conn->id);
 		close_serial_connection(&connection[i]);
 		netprintf(conn,"Connection ID %i serial port closed\r\n",connid);
 	} else {
