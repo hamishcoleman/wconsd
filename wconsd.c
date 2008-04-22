@@ -30,7 +30,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-#define VERSION "0.2.2"
+#define VERSION "0.2.3"
 
 /* Size of buffers for send and receive */
 #define BUFSIZE 1024
@@ -54,9 +54,12 @@ DWORD com_speed=9600;
 BYTE  com_data=8;
 BYTE  com_parity=NOPARITY;
 BYTE  com_stop=ONESTOPBIT;
-BOOL  com_autoclose=TRUE;
 
 int   default_tcpport = 23;
+
+/* TODO - these buffers are ugly and large */
+char *hostname[BUFSIZE];
+struct hostent *host_entry;
 
 /* Service status: our current status, and handle on service manager */
 SERVICE_STATUS wconsd_status;
@@ -189,9 +192,14 @@ DWORD open_com_port(struct connection *conn, DWORD *specificError) {
 		return 15;
 	}
 
+	/* FIXME - these values need much more tuning */
 	timeouts.ReadIntervalTimeout=20;
 	timeouts.ReadTotalTimeoutMultiplier=0;
-	timeouts.ReadTotalTimeoutConstant=2000;
+	/*
+	 * Note that this means that the serial to net thread wakes
+	 * each and ever 50 milliseconds
+	 */
+	timeouts.ReadTotalTimeoutConstant=50;
 	timeouts.WriteTotalTimeoutMultiplier=0;
 	timeouts.WriteTotalTimeoutConstant=0;
 	if (!SetCommTimeouts(conn->serial, &timeouts)) {
@@ -316,6 +324,22 @@ DWORD wconsd_init(DWORD argc, LPSTR *argv, DWORD *specificError)
 		*specificError=WSAGetLastError();
 		return 12;
 	}
+
+	if (gethostname((char *)hostname,sizeof(hostname))==SOCKET_ERROR) {
+		*specificError=WSAGetLastError();
+		return 1;
+	}
+	dprintf(1,"wconsd: Hostname is %s\n",hostname);
+
+	host_entry=gethostbyname((char *)hostname);
+	if (host_entry->h_addrtype!=AF_INET) {
+		host_entry=0;
+		return 0;
+	}
+
+	dprintf(1,"wconsd: IP Address is %s\n",inet_ntoa (*(struct in_addr *)*host_entry->h_addr_list));
+	/* FIXME - enumerate all the IP addresses from the list */
+
 	return 0;
 }
 
@@ -329,11 +353,10 @@ int process_telnet_option(struct connection*conn, unsigned char *buf) {
 		case 0xf0:	/* suboption end */
 		case 241:	/* NOP */
 		case 242:	/* Data Mark */
-			dprintf(1,"wconsd[%i]: option IAC %i\n",conn->id,buf[1]);
+			dprintf(2,"wconsd[%i]: option IAC %i\n",conn->id,buf[1]);
 			return 2;
 		case 243:	/* Break */
 			if (conn->serialconnected) {
-				dprintf(1,"wconsd[%i]: send break\n",conn->id);
 				Sleep(1000);
 				SetCommBreak(conn->serial);
 				Sleep(1000);
@@ -341,7 +364,6 @@ int process_telnet_option(struct connection*conn, unsigned char *buf) {
 			}
 			return 2;
 		case 244:	/* Interrupt */
-			dprintf(1,"wconsd[%i]: option IAC Interrupt\n",conn->id,buf[1]);
 			conn->menuactive=1;
 			return 2;
 		case 245:	/* abort output */
@@ -381,7 +403,7 @@ int process_telnet_option(struct connection*conn, unsigned char *buf) {
 			}
 			return 6;
 		case 0xfb:	/* WILL */
-			dprintf(1,"wconsd[%i]: option IAC WILL %i\n",conn->id,buf[2]);
+			dprintf(2,"wconsd[%i]: option IAC WILL %i\n",conn->id,buf[2]);
 			return 3;
 		case 0xfc:	/* WONT */
 			dprintf(1,"wconsd[%i]: option IAC WONT %i\n",conn->id,buf[2]);
@@ -389,11 +411,11 @@ int process_telnet_option(struct connection*conn, unsigned char *buf) {
 		case 0xfd:	/* DO */
 			switch (buf[2]) {
 				case 0x01:	/* ECHO */
-					dprintf(1,"wconsd[%i]: DO ECHO\n",conn->id);
+					dprintf(2,"wconsd[%i]: DO ECHO\n",conn->id);
 					conn->option_echo=1;
 					break;
 				case 0x03:	/* suppress go ahead */
-					dprintf(1,"wconsd[%i]: DO suppress go ahead\n",conn->id);
+					dprintf(2,"wconsd[%i]: DO suppress go ahead\n",conn->id);
 					break;
 			}
 			return 3;
@@ -404,7 +426,7 @@ int process_telnet_option(struct connection*conn, unsigned char *buf) {
 					conn->option_echo=0;
 					break;
 				default:
-					dprintf(1,"wconsd[%i]: option IAC DONT %i\n",conn->id,buf[2]);
+					dprintf(2,"wconsd[%i]: option IAC DONT %i\n",conn->id,buf[2]);
 			}
 			return 3;
 		case 0xff:	/* send ff */
@@ -456,7 +478,7 @@ DWORD WINAPI wconsd_net_to_com(LPVOID lpParam)
 	struct timeval tv;
 	OVERLAPPED o={0};
 
-	dprintf(1,"wconsd[%i]: start wconsd_net_to_com\n",conn->id);
+	dprintf(1,"wconsd[%i]: debug: start wconsd_net_to_com\n",conn->id);
 
 	o.hEvent = writeEvent;
 	while (conn->netconnected && conn->serialconnected) {
@@ -548,7 +570,7 @@ DWORD WINAPI wconsd_net_to_com(LPVOID lpParam)
 		 */
 		serial_writefile(conn,&o,buf,size);
 	}
-	dprintf(1,"wconsd[%i]: finish wconsd_net_to_com\n",conn->id);
+	dprintf(1,"wconsd[%i]: debug: finish wconsd_net_to_com\n",conn->id);
 	return 0;
 }
 
@@ -561,7 +583,7 @@ DWORD WINAPI wconsd_com_to_net(LPVOID lpParam)
 
 	o.hEvent=readEvent;
 
-	dprintf(1,"wconsd[%i]: start wconsd_com_to_net\n",conn->id);
+	dprintf(1,"wconsd[%i]: debug: start wconsd_com_to_net\n",conn->id);
 
 	while (conn->serialconnected && conn->netconnected) {
 		if (!ReadFile(conn->serial,buf,BUFSIZE,&size,&o)) {
@@ -586,34 +608,45 @@ DWORD WINAPI wconsd_com_to_net(LPVOID lpParam)
 			conn->net_bytes_tx+=size;
 		}
 	}
-	dprintf(1,"wconsd[%i]: finish wconsd_com_to_net\n",conn->id);
+	dprintf(1,"wconsd[%i]: debug: finish wconsd_com_to_net\n",conn->id);
 	return 0;
 }
 
 void send_help(struct connection *conn) {
 	netprintf(conn,
+		"NOTE: the commands will be changing in the next version\r\n"
 		"\r\n"
-		"NOTE: these commands will change in the next version\r\n\n"
-		"available commands:\r\n\n"
-		"  port speed data parity stop\r\n"
-		"  help status copyright\r\n"
-		"  open close autoclose\r\n"
-		"  show_conn_table kill_conn\r\n"
-		"  quit\r\n");
+		"available commands:\r\n"
+		"\r\n"
+		"close           - Stop serial communications\r\n"
+		"copyright       - Print the copyright notice\r\n"
+		"data            - Set number of data bits\r\n"
+		"help            - This guff\r\n"
+		"kill_conn       - Stop a given connection's serial communications\r\n"
+		"open            - Connect or resume communications with a serial port\r\n"
+		"parity          - Set the serial parity\r\n"
+		"port            - Set serial port number\r\n"
+		"quit            - exit from this session\r\n"
+		"show_conn_table - Show the connections table\r\n"
+		"speed           - Set serial port speed\r\n"
+		"status          - Show current serial port status\r\n"
+		"stop            - Set number of stop bits\r\n"
+		"\r\n");
 }
 
 void show_status(struct connection* conn) {
 	/* print the status to the net connection */
 
 	netprintf(conn, "status:\r\n\n"
-			"  port=%d  speed=%d  data=%d  parity=%d  stop=%d\r\n\n",
+			"  port=%d  speed=%d  data=%d  parity=%d  stop=%d\r\n",
 			com_port, com_speed, com_data, com_parity, com_stop);
 
 	if(conn->serialconnected) {
-		netprintf(conn, "  state=open    autoclose=%d\r\n\n", com_autoclose);
+		netprintf(conn, "  state=open\r\n\n");
 	} else {
-		netprintf(conn, "  state=closed  autoclose=%d\r\n\n", com_autoclose);
+		netprintf(conn, "  state=closed\r\n\n");
 	}
+	netprintf(conn,"  connectionid=%i  hostname=%s\r\n\r\n",conn->id,hostname);
 }
 
 /*
@@ -680,6 +713,10 @@ void process_menu_line(struct connection*conn, char *line) {
 	} else if (!strcmp(command, "speed")) {		// speed
 		com_speed = check_atoi(parameter1,com_port,conn,"must specify a speed\r\n");
 	} else if (!strcmp(command, "data")) {		// data
+		if (!parameter1) {
+			netprintf(conn,"Please specify number of data bits {5,6,7,8}\r\n");
+			return;
+		}
 		if (!strcmp(parameter1, "5")) {
 			com_data=5;
 		} else if (!strcmp(parameter1, "6")) {
@@ -691,6 +728,10 @@ void process_menu_line(struct connection*conn, char *line) {
 		}
 		show_status(conn);
 	} else if (!strcmp(command, "parity")) {	// parity
+		if (!parameter1) {
+			netprintf(conn,"Please specify the parity {no,even,odd,mark,space}\r\n");
+			return;
+		}
 		if (!strcmp(parameter1, "no") || !strcmp(parameter1, "0")) {
 			com_parity=NOPARITY;
 		} else if (!strcmp(parameter1, "even") || !strcmp(parameter1, "2")) {
@@ -704,6 +745,10 @@ void process_menu_line(struct connection*conn, char *line) {
 		}
 		show_status(conn);
 	} else if (!strcmp(command, "stop")) {
+		if (!parameter1) {
+			netprintf(conn,"Please specify the number of stop bits {1,1.5,2}\r\n");
+			return;
+		}
 		if (!strcmp(parameter1, "one") || !strcmp(parameter1, "1")) {
 			com_stop=ONESTOPBIT;
 		} else if (!strcmp(parameter1, "one5") || !strcmp(parameter1, "1.5")) {
@@ -714,7 +759,7 @@ void process_menu_line(struct connection*conn, char *line) {
 		show_status(conn);
 	} else if (!strcmp(command, "open")) {		// open
 		DWORD errcode;
-		int new = check_atoi(parameter1,com_port,conn,"open default port\r\n");
+		int new = check_atoi(parameter1,com_port,conn,"Opening default port\r\n");
 
 		if (new >= 1 && new <= 16) {
 			com_port=new;
@@ -738,13 +783,6 @@ void process_menu_line(struct connection*conn, char *line) {
 	} else if (!strcmp(command, "close")) {			// close
 		close_serial_connection(conn);
 		netprintf(conn,"info: actual com port closed\r\n\n");
-	} else if (!strcmp(command, "autoclose")) {		// autoclose
-		if (!strcmp(parameter1, "true") || !strcmp(parameter1, "1") || !strcmp(parameter1, "yes")) {
-			com_autoclose=TRUE;
-		} else if (!strcmp(parameter1, "false") || !strcmp(parameter1, "0") || !strcmp(parameter1, "no")) {
-			com_autoclose=FALSE;
-		}
-		show_status(conn);
 	} else if (!strcmp(command, "quit")) {
 		// quit the connection
 		conn->menuactive=0;
@@ -755,17 +793,20 @@ void process_menu_line(struct connection*conn, char *line) {
 	} else if (!strcmp(command, "show_conn_table")) {
 		int i;
 		netprintf(conn,
-				"slot A id M mThr N net  netTh S serial serialTh E netrx nettx\r\n");
+				"slot state id Menu mThr Net net  netTh Ser serial serialTh Echo netrx nettx\r\n");
 		netprintf(conn,
-				"---- - -- - ---- - ---- ----- - ------ -------- - ----- -----\r\n");
+				"---- ----- -- ---- ---- --- ---- ----- --- ------ -------- ---- ----- -----\r\n");
 		for (i=0;i<MAXCONNECTIONS;i++) {
 			netprintf(conn,
-				"%-4i %i %2i %i %4i %i %4i %5i %i %6i %8i %i %5i %5i\r\n",
-				i, connection[i].active, connection[i].id,
-				connection[i].menuactive, connection[i].menuThread,
-				connection[i].netconnected, connection[i].net, connection[i].netThread,
-				connection[i].serialconnected, connection[i].serial, connection[i].serialThread,
-				connection[i].option_echo,
+				"%-4i %s %2i %s %4i %s %4i %5i %s %6i %8i %s %5i %5i\r\n",
+				i, connection[i].active?"ACTIV":"     ", connection[i].id,
+				connection[i].menuactive?"YES ":"    ",
+				connection[i].menuThread,
+				connection[i].netconnected?"OK ":"   ",
+				connection[i].net, connection[i].netThread,
+				connection[i].serialconnected?"OK ":"   ",
+				connection[i].serial, connection[i].serialThread,
+				connection[i].option_echo?"YES ":"NO  ",
 				connection[i].net_bytes_rx, connection[i].net_bytes_tx
 				);
 		}
@@ -789,8 +830,12 @@ void process_menu_line(struct connection*conn, char *line) {
 		netprintf(conn,"Connection ID %i serial port closed\r\n",connid);
 	} else {
 		/* other, unknown commands */
-		netprintf(conn,"debug: line='%s', command='%s'\r\n\n",line,command);
+		netprintf(conn,"\r\nInvalid Command: '%s'\r\n\r\n",line);
 	}
+}
+
+void show_prompt(struct connection *conn) {
+	netprintf(conn,"%s> ",hostname);
 }
 
 void run_menu(struct connection * conn) {
@@ -810,7 +855,7 @@ void run_menu(struct connection * conn) {
 
 	netprintf(conn,"\r\nwconsd serial port server (version %s)\r\n\r\n",VERSION);
 	send_help(conn);
-	netprintf(conn,"> ");
+	show_prompt(conn);
 
 	FD_ZERO(&set_read);
 	while (conn->menuactive && conn->netconnected) {
@@ -867,7 +912,7 @@ void run_menu(struct connection * conn) {
 					}
 				}
 
-				netprintf(conn,"> ");
+				show_prompt(conn);
 				linelen=0;
 				continue;
 			} else if (buf[i] <0x20) {
@@ -924,7 +969,7 @@ DWORD WINAPI thread_new_connection(LPVOID lpParam) {
 	struct connection * conn = (struct connection*)lpParam;
 
 	while(conn->netconnected) {
-		dprintf(1,"wconsd[%i]: top of menu thread running loop\n",conn->id);
+		dprintf(1,"wconsd[%i]: debug: start thread_new_connection loop\n",conn->id);
 
 		/* basically, if we have exited the net_to_com thread and have
 		 * still got net connectivity, we are in the menu
@@ -992,7 +1037,7 @@ static void wconsd_main(void)
 	wait_array[1]=listenSocketEvent;
 
 	while (run) {
-		dprintf(1,"wconsd: top of wconsd_main run loop\n");
+		dprintf(1,"wconsd: debug: start wconsd_main loop\n");
 
 		o=WaitForMultipleObjects(2,wait_array,FALSE,INFINITE);
 
@@ -1011,19 +1056,8 @@ static void wconsd_main(void)
 				break;
 			}
 
-/* getnameinfo does not appear to be supported in my windows build environment */
-#ifdef GETNAMEINFO
-			char buf[MAXLEN];
-			if (!getnameinfo((struct sockaddr*)&sa,salen,buf,sizeof(buf),NULL,0,0)) {
-#endif
-				dprintf(1,"wconsd: new connection from %08x\n",
-					htonl(sa.sin_addr.s_addr));
-#ifdef GETNAMEINFO
-			} else {
-				dprintf(1,"wconsd: new connection from %s\n",
-					&buf);
-			}
-#endif
+			dprintf(1,"wconsd: new connection from %s\n",
+					inet_ntoa(sa.sin_addr));
 
 			/* search for an empty connection slot */
 			i=next_connection_slot%MAXCONNECTIONS;
@@ -1054,7 +1088,7 @@ static void wconsd_main(void)
 			connection[i].net_bytes_rx=0;
 			connection[i].net_bytes_tx=0;
 
-			dprintf(1,"wconsd[%i]: accepted new connection slot=%i\n",connection[i].id,i);
+			dprintf(1,"wconsd[%i]: accepted new connection in slot %i\n",connection[i].id,i);
 
 
 			/* we successfully accepted the connection */
@@ -1222,11 +1256,13 @@ static void RemoveService(void)
 
 static void usage(void)
 {
-	printf("Usage: wconsd [-i pathname | -r | -d]\n");
+	printf("Usage: wconsd [-i pathname | -r | -d | -p port ]\n");
+	printf("Just start with no options to start server\n");
 	printf("   -i pathname     install service 'wconsd'; pathname\n");
 	printf("                   must be the full path to the binary\n");
 	printf("   -r              remove service 'wconsd'\n");
-	printf("   -d              run wconsd in debug mode (in the foreground)\n");
+	printf("   -d              run wconsd in foreground mode\n");
+	printf("   -p port         listen on the given port in foreground mode\n");
 }
 
 int main(int argc, char **argv)
@@ -1265,7 +1301,8 @@ int main(int argc, char **argv)
 	// We are running in debug mode (or any other command-line mode)
 	debug_mode=1;
 
-	dprintf(1,"wconsd: Serial Console server\n");
+	dprintf(1,"\nwconsd: Serial Console server (version %s)\n",VERSION);
+ 	dprintf(1,"          (see http://wob.zot.org/2/wiki/wconsd for more info)\n\n");
 
 	if (argc>1) {
 		if (strcmp(argv[1],"-i")==0) {
@@ -1291,12 +1328,12 @@ int main(int argc, char **argv)
 		}
 	}
 
-	dprintf(1,"wconsd: listen on port %i\n",default_tcpport);
+	dprintf(1,"wconsd: listening on port %i\n",default_tcpport);
 
 	// if we have decided to run as a console app..
 	if (console_application) {
 		int r;
-		dprintf(1,"wconsd: Console Application Mode (version %s)\n",VERSION);
+		dprintf(1,"wconsd: Foreground mode\n");
 		r=wconsd_init(argc,argv,&err);
 		if (r!=0) {
 			dprintf(1,"wconsd: wconsd_init failed, return code %d [%l]\n",r, err);
