@@ -30,7 +30,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-#define VERSION "0.2.3"
+#define VERSION "0.2.4"
 
 /* Size of buffers for send and receive */
 #define BUFSIZE 1024
@@ -294,6 +294,21 @@ DWORD wconsd_init(DWORD argc, LPSTR *argv, DWORD *specificError)
 		return 8;
 	}
 
+	if (gethostname((char *)hostname,sizeof(hostname))==SOCKET_ERROR) {
+		*specificError=WSAGetLastError();
+		return 1;
+	}
+	dprintf(1,"wconsd: Hostname is %s\n",hostname);
+
+	host_entry=gethostbyname((char *)hostname);
+	if (host_entry->h_addrtype==AF_INET) {
+		dprintf(1,"wconsd: IP Address is %s\n",inet_ntoa (*(struct in_addr *)*host_entry->h_addr_list));
+		/* FIXME - enumerate all the IP addresses from the list */
+	} else {
+		host_entry=0;
+		return 0;
+	}
+
 	/* Create a socket to listen for connections. */
 	memset(&sin,0,sizeof(sin));
 	sin.sin_family=AF_INET;
@@ -318,27 +333,14 @@ DWORD wconsd_init(DWORD argc, LPSTR *argv, DWORD *specificError)
 		*specificError=WSAGetLastError();
 		return 11;
 	}
+	dprintf(1,"wconsd: listening on port %i\n",default_tcpport);
+
 
 	/* Mark the socket as non-blocking */
 	if (WSAEventSelect(ls,listenSocketEvent,FD_ACCEPT)==SOCKET_ERROR) {
 		*specificError=WSAGetLastError();
 		return 12;
 	}
-
-	if (gethostname((char *)hostname,sizeof(hostname))==SOCKET_ERROR) {
-		*specificError=WSAGetLastError();
-		return 1;
-	}
-	dprintf(1,"wconsd: Hostname is %s\n",hostname);
-
-	host_entry=gethostbyname((char *)hostname);
-	if (host_entry->h_addrtype!=AF_INET) {
-		host_entry=0;
-		return 0;
-	}
-
-	dprintf(1,"wconsd: IP Address is %s\n",inet_ntoa (*(struct in_addr *)*host_entry->h_addr_list));
-	/* FIXME - enumerate all the IP addresses from the list */
 
 	return 0;
 }
@@ -494,6 +496,7 @@ DWORD WINAPI wconsd_net_to_com(LPVOID lpParam)
 		tv.tv_sec = 2;
 		tv.tv_usec = 0;
 		select(0,&s,NULL,NULL,&tv);
+		/* TODO - examine the retval for the select */
 		size=recv(conn->net,(void*)&buf,BUFSIZE,0);
 		if (size==0) {
 			closesocket(conn->net);
@@ -503,8 +506,16 @@ DWORD WINAPI wconsd_net_to_com(LPVOID lpParam)
 			continue;
 		}
 		if (size==SOCKET_ERROR) {
-			/* General paranoia about blocking sockets */
-			ioctlsocket(conn->net,FIONBIO,&zero);
+			int err = WSAGetLastError();
+			switch (err) {
+				case WSAEWOULDBLOCK:
+					/* ignore */
+					continue;
+				default:
+					dprintf(1,"wconsd[%i]: net_to_com socket error (%i)\n",conn->id,err);
+					/* General paranoia about blocking sockets */
+					ioctlsocket(conn->net,FIONBIO,&zero);
+			}
 			continue;
 		}
 		conn->net_bytes_rx+=size;
@@ -846,6 +857,7 @@ void run_menu(struct connection * conn) {
 
 	unsigned long zero=0;
 	fd_set set_read;
+	struct timeval tv;
 
 	/* IAC WILL ECHO */
 	/* IAC WILL suppress go ahead */
@@ -860,7 +872,10 @@ void run_menu(struct connection * conn) {
 	FD_ZERO(&set_read);
 	while (conn->menuactive && conn->netconnected) {
 		FD_SET(conn->net,&set_read);
-		select(conn->net+1,&set_read,NULL,NULL,NULL);
+		tv.tv_sec = 2;
+		tv.tv_usec = 0;
+		select(conn->net+1,&set_read,NULL,NULL,&tv);
+		/* TODO - examine the retval for the select */
 		size=recv(conn->net,(void*)&buf,BUFSIZE,0);
 
 		if (size==0) {
@@ -870,9 +885,16 @@ void run_menu(struct connection * conn) {
 			return;
 		}
 		if (size==SOCKET_ERROR) {
-			dprintf(1,"wconsd[%i]: socket error\n",conn->id);
-			/* General paranoia about blocking sockets */
-			ioctlsocket(conn->net,FIONBIO,&zero);
+			int err = WSAGetLastError();
+			switch (err) {
+				case WSAEWOULDBLOCK:
+					/* ignore */
+					continue;
+				default:
+					dprintf(1,"wconsd[%i]: run_menu socket error (%i)\n",conn->id,WSAGetLastError());
+					/* General paranoia about blocking sockets */
+					ioctlsocket(conn->net,FIONBIO,&zero);
+			}
 			continue;
 		}
 		conn->net_bytes_rx+=size;
@@ -1301,8 +1323,10 @@ int main(int argc, char **argv)
 	// We are running in debug mode (or any other command-line mode)
 	debug_mode=1;
 
-	dprintf(1,"\nwconsd: Serial Console server (version %s)\n",VERSION);
- 	dprintf(1,"          (see http://wob.zot.org/2/wiki/wconsd for more info)\n\n");
+	dprintf(1,"\n"
+		"wconsd: Serial Console server (version %s)\n",VERSION);
+	dprintf(1,
+		"        (see http://wob.zot.org/2/wiki/wconsd for more info)\n\n");
 
 	if (argc>1) {
 		if (strcmp(argv[1],"-i")==0) {
@@ -1327,8 +1351,6 @@ int main(int argc, char **argv)
 			return 1;
 		}
 	}
-
-	dprintf(1,"wconsd: listening on port %i\n",default_tcpport);
 
 	// if we have decided to run as a console app..
 	if (console_application) {
