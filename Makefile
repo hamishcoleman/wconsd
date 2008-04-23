@@ -1,5 +1,5 @@
 
-all: wconsd.exe
+all: wconsd.exe portenum.exe
 
 get:
 	pscp 192.168.1.1:s/src/wconsd/*.c ./
@@ -10,6 +10,9 @@ put:
 
 wconsd.exe: wconsd.c
 	gcc -Wall -o wconsd.exe wconsd.c -lws2_32
+
+portenum.exe: portenum.c
+	gcc -Wall -o portenum.exe portenum.c -lwinspool -lsetupapi
 
 test: wconsd.exe
 	./wconsd.exe -d
