@@ -30,7 +30,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-#define VERSION "0.2.4"
+#define VERSION "0.2.5"
 
 /* Size of buffers for send and receive */
 #define BUFSIZE 1024
@@ -74,7 +74,6 @@ int next_connection_slot = 0;	/* next slot to look at for new connection */
 struct connection {
 	int active;		/* an active entry cannot be reused */
 	int id;			/* connection identifier */
-	int menuactive;		/* dont run the serial pump on a menu */
 	HANDLE menuThread;
 	int netconnected;
 	SOCKET net;
@@ -82,9 +81,12 @@ struct connection {
 	int serialconnected;
 	HANDLE serial;
 	HANDLE serialThread;
+	int option_runmenu;	/* are we at the menu? */
 	int option_echo;	/* will we echo chars recieved? */
+	int option_keepalive;	/* will we send IAC NOPs all the time? */
 	int net_bytes_rx;
 	int net_bytes_tx;
+	struct sockaddr *sa;
 };
 struct connection connection[MAXCONNECTIONS];
 
@@ -226,7 +228,7 @@ void close_serial_connection(struct connection *conn) {
 		dprintf(1,"wconsd: closing closed connection %i\n",conn->id);
 		return;
 	}
-	conn->menuactive=1;
+	conn->option_runmenu=1;
 	close_com_port(conn);
 	WaitForSingleObject(conn->serialThread,INFINITE);
 	CloseHandle(conn->serialThread);
@@ -366,7 +368,7 @@ int process_telnet_option(struct connection*conn, unsigned char *buf) {
 			}
 			return 2;
 		case 244:	/* Interrupt */
-			conn->menuactive=1;
+			conn->option_runmenu=1;
 			return 2;
 		case 245:	/* abort output */
 			dprintf(1,"wconsd[%i]: option IAC %i\n",conn->id,buf[1]);
@@ -510,7 +512,15 @@ DWORD WINAPI wconsd_net_to_com(LPVOID lpParam)
 			switch (err) {
 				case WSAEWOULDBLOCK:
 					/* ignore */
+					if (conn->option_keepalive) {
+						netprintf(conn,"\xff\xf1");
+					}
 					continue;
+				case WSAECONNRESET:
+					closesocket(conn->net);
+					conn->net=INVALID_SOCKET;
+					conn->netconnected=0;
+					return;
 				default:
 					dprintf(1,"wconsd[%i]: net_to_com socket error (%i)\n",conn->id,err);
 					/* General paranoia about blocking sockets */
@@ -564,9 +574,9 @@ DWORD WINAPI wconsd_net_to_com(LPVOID lpParam)
 
 		/* TODO - emulate ciscos ctrl-^,x sequence for exit to menu */
 
-		if (conn->menuactive) {
+		if (conn->option_runmenu) {
 			/* TODO - if we are in menu mode, hook into the menu here */
-			// dprintf(1,"wconsd[%i]: unexpected menuactive\n",conn->id);
+			// dprintf(1,"wconsd[%i]: unexpected option_runmenu\n",conn->id);
 			return 0;
 		}
 
@@ -657,7 +667,9 @@ void show_status(struct connection* conn) {
 	} else {
 		netprintf(conn, "  state=closed\r\n\n");
 	}
-	netprintf(conn,"  connectionid=%i  hostname=%s\r\n\r\n",conn->id,hostname);
+	netprintf(conn,"  connectionid=%i  hostname=%s\r\n",conn->id,hostname);
+	netprintf(conn,"  echo=%i  keepalive=%i\r\n",conn->option_echo,conn->option_keepalive);
+	netprintf(conn,"\r\n");
 }
 
 /*
@@ -779,14 +791,14 @@ void process_menu_line(struct connection*conn, char *line) {
 			/* port ist still open */
 			netprintf(conn,"\r\n\n");
 			/* signal to quit the menu */
-			conn->menuactive=0;
+			conn->option_runmenu=0;
 			return;
 		}
 
 		if (!open_com_port(conn,&errcode)) {
 			netprintf(conn,"\r\n\n");
 			// signal to quit the menu
-			conn->menuactive=0;
+			conn->option_runmenu=0;
 			return;
 		} else {
 			netprintf(conn,"error: cannot open port\r\n\n");
@@ -796,30 +808,62 @@ void process_menu_line(struct connection*conn, char *line) {
 		netprintf(conn,"info: actual com port closed\r\n\n");
 	} else if (!strcmp(command, "quit")) {
 		// quit the connection
-		conn->menuactive=0;
+		conn->option_runmenu=0;
 		closesocket(conn->net);
 		conn->net=INVALID_SOCKET;
 		conn->netconnected=0;
 		return;
+	} else if (!strcmp(command, "keepalive")) {
+		conn->option_keepalive=!conn->option_keepalive;
+		return;
 	} else if (!strcmp(command, "show_conn_table")) {
 		int i;
 		netprintf(conn,
-				"slot state id Menu mThr Net net  netTh Ser serial serialTh Echo netrx nettx\r\n");
+			"Flags: A - Active Slot, N - Network active, S - Serial active,\r\n"
+			"       M - Run Menu, E - Echo enabled, K - Telnet Keepalives,\r\n"
+			"       * - This connection\r\n"
+			"\r\n");
 		netprintf(conn,
-				"---- ----- -- ---- ---- --- ---- ----- --- ------ -------- ---- ----- -----\r\n");
+				"s flags  id mThr net  netTh serial serialTh netrx nettx peer address\r\n");
+		netprintf(conn,
+				"- ------ -- ---- ---- ----- ------ -------- ----- ----- ------------\r\n");
 		for (i=0;i<MAXCONNECTIONS;i++) {
-			netprintf(conn,
-				"%-4i %s %2i %s %4i %s %4i %5i %s %6i %8i %s %5i %5i\r\n",
-				i, connection[i].active?"ACTIV":"     ", connection[i].id,
-				connection[i].menuactive?"YES ":"    ",
-				connection[i].menuThread,
-				connection[i].netconnected?"OK ":"   ",
-				connection[i].net, connection[i].netThread,
-				connection[i].serialconnected?"OK ":"   ",
-				connection[i].serial, connection[i].serialThread,
-				connection[i].option_echo?"YES ":"NO  ",
-				connection[i].net_bytes_rx, connection[i].net_bytes_tx
-				);
+			netprintf(conn,"%i%c%c%c%c%c%c%c %2i %4i ",
+				i,
+				&connection[i]==conn?'*':' ',
+				connection[i].active?'A':' ',
+				connection[i].netconnected?'N':' ',
+				connection[i].serialconnected?'S':' ',
+				connection[i].option_runmenu?'M':' ',
+				connection[i].option_echo?'E':' ',
+				connection[i].option_keepalive?'K':' ',
+				connection[i].id,
+
+				connection[i].menuThread);
+			if (connection[i].netconnected) {
+				netprintf(conn,"%4i %5i ",
+					connection[i].net,
+					connection[i].netThread);
+			} else {
+				netprintf(conn,"           ");
+			}
+			if (connection[i].serialconnected) {
+				netprintf(conn,"%6i %8i ",
+					connection[i].serial,
+					connection[i].serialThread);
+			} else {
+				netprintf(conn,"                ");
+			}
+			netprintf(conn, "%5i %5i ",
+				connection[i].net_bytes_rx,
+				connection[i].net_bytes_tx);
+			if (connection[i].sa) {
+				/* FIXME - IPv4 Specific */
+				netprintf(conn,"%s:%i",
+					inet_ntoa(((struct sockaddr_in*)connection[i].sa)->sin_addr),
+					htons(((struct sockaddr_in*)connection[i].sa)->sin_port));
+			}
+			netprintf(conn, "\r\n");
 		}
 	} else if (!strcmp(command, "kill_conn")) {
 		int connid = check_atoi(parameter1,0,conn,"must specify a connection id\r\n");
@@ -870,7 +914,7 @@ void run_menu(struct connection * conn) {
 	show_prompt(conn);
 
 	FD_ZERO(&set_read);
-	while (conn->menuactive && conn->netconnected) {
+	while (conn->option_runmenu && conn->netconnected) {
 		FD_SET(conn->net,&set_read);
 		tv.tv_sec = 2;
 		tv.tv_usec = 0;
@@ -889,7 +933,15 @@ void run_menu(struct connection * conn) {
 			switch (err) {
 				case WSAEWOULDBLOCK:
 					/* ignore */
+					if (conn->option_keepalive) {
+						netprintf(conn,"\xff\xf1");
+					}
 					continue;
+				case WSAECONNRESET:
+					closesocket(conn->net);
+					conn->net=INVALID_SOCKET;
+					conn->netconnected=0;
+					return;
 				default:
 					dprintf(1,"wconsd[%i]: run_menu socket error (%i)\n",conn->id,WSAGetLastError());
 					/* General paranoia about blocking sockets */
@@ -928,7 +980,7 @@ void run_menu(struct connection * conn) {
 					line[linelen]=0;	// ensure string is terminated
 
 					process_menu_line(conn,(char*)line);
-					if (!conn->menuactive) {
+					if (!conn->option_runmenu) {
 						/* exiting the menu.. */
 						return;
 					}
@@ -996,13 +1048,13 @@ DWORD WINAPI thread_new_connection(LPVOID lpParam) {
 		/* basically, if we have exited the net_to_com thread and have
 		 * still got net connectivity, we are in the menu
 		 */
-		conn->menuactive=1;
+		conn->option_runmenu=1;
 
-		if ((conn->menuactive && conn->netconnected) || !conn->serialconnected) {
+		if ((conn->option_runmenu && conn->netconnected) || !conn->serialconnected) {
 			/* run the menu to ask the user questions */
 			run_menu(conn);
 		}
-		if (!conn->menuactive && conn->netconnected && conn->serialconnected) {
+		if (!conn->option_runmenu && conn->netconnected && conn->serialconnected) {
 			/* they must have opened the com port, so start the threads */
 			PurgeComm(conn->serial,PURGE_RXCLEAR|PURGE_RXABORT);
 			conn->netThread=CreateThread(NULL,0,wconsd_net_to_com,conn,0,NULL);
@@ -1098,7 +1150,6 @@ static void wconsd_main(void)
 			next_connection_slot = (next_connection_slot+1)%MAXCONNECTIONS;
 			connection[i].active=1;	/* mark this entry busy */
 			connection[i].id = next_connection_id++;
-			connection[i].menuactive=1;	/* start in the menu */
 			connection[i].menuThread=NULL;
 			connection[i].netconnected=1;
 			connection[i].net=as;
@@ -1106,9 +1157,23 @@ static void wconsd_main(void)
 			connection[i].serialconnected=0;
 			connection[i].serial=INVALID_HANDLE_VALUE;
 			connection[i].serialThread=NULL;
+			connection[i].option_runmenu=1;	/* start in the menu */
 			connection[i].option_echo=0;
+			connection[i].option_keepalive=0;
 			connection[i].net_bytes_rx=0;
 			connection[i].net_bytes_tx=0;
+
+			if (connection[i].sa) {
+				/* Do lazy de-allocation so that the info is
+				 * still visible to show conn table */
+				free(connection[i].sa);
+			}
+			if ((connection[i].sa=malloc(salen))==NULL) {
+				dprintf(1,"wconsd[%i]: malloc failed\n",
+					connection[i].id);
+			} else {
+				memcpy(connection[i].sa,&sa,salen);
+			}
 
 			dprintf(1,"wconsd[%i]: accepted new connection in slot %i\n",connection[i].id,i);
 
