@@ -652,6 +652,8 @@ void send_help(struct connection *conn) {
 		"speed           - Set serial port speed\r\n"
 		"status          - Show current serial port status\r\n"
 		"stop            - Set number of stop bits\r\n"
+		"\r\n"
+		"see http://wob.zot.org/2/wiki/wconsd for more information\r\n"
 		"\r\n");
 }
 
