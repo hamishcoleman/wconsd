@@ -30,7 +30,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-#define VERSION "0.2.5"
+#define VERSION "0.2.6"
 
 /* Size of buffers for send and receive */
 #define BUFSIZE 1024
@@ -67,6 +67,17 @@ SERVICE_STATUS_HANDLE wconsd_statusHandle;
 
 int debug_mode = 0;
 
+/* these match the official telnet codes */
+#define TELNET_OPTION_SB	0xfa
+#define TELNET_OPTION_WILL	0xfb
+#define TELNET_OPTION_WONT	0xfc
+#define TELNET_OPTION_DO	0xfd
+#define TELNET_OPTION_DONT	0xfe
+#define TELNET_OPTION_IAC	0xff
+
+/* these are my local state-tracking codes */
+#define TELNET_OPTION_SBXX	0xfa00	/* received IAC SB xx */
+
 #define MAXCONNECTIONS	8
 
 int next_connection_id = 1;	/* lifetime unique connection id */
@@ -82,11 +93,14 @@ struct connection {
 	HANDLE serial;
 	HANDLE serialThread;
 	int option_runmenu;	/* are we at the menu? */
-	int option_echo;	/* will we echo chars recieved? */
+	int option_binary;	/* binary transmission requested */
+	int option_echo;	/* will we echo chars received? */
 	int option_keepalive;	/* will we send IAC NOPs all the time? */
 	int net_bytes_rx;
 	int net_bytes_tx;
 	struct sockaddr *sa;
+	int telnet_option;	/* Set to indicate option processing status */
+	int telnet_option_param;/* saved parameters from telnet options */
 };
 struct connection connection[MAXCONNECTIONS];
 
@@ -348,95 +362,167 @@ DWORD wconsd_init(DWORD argc, LPSTR *argv, DWORD *specificError)
 }
 
 /*
- * given a buffer starting with 0xff, process the telnet options and return
- * the number of bytes to skip
+ * telnet option receiver state machine.
+ * Called with the current char, it saves the intermediate state in the
+ * conn struct.
+ *
+ * Returns 0 to indicate no echo of this char, or 0xff to indicate that the
+ * char should be echoed.
  */
-int process_telnet_option(struct connection*conn, unsigned char *buf) {
+unsigned char  process_telnet_option(struct connection*conn, unsigned char ch) {
+	dprintf(2,"wconsd[%i]: debug option (0x%02x) 0x%02x\n",conn->id,conn->telnet_option,ch);
 
-	switch (buf[1]) {
-		case 0xf0:	/* suboption end */
-		case 241:	/* NOP */
-		case 242:	/* Data Mark */
-			dprintf(2,"wconsd[%i]: option IAC %i\n",conn->id,buf[1]);
-			return 2;
-		case 243:	/* Break */
-			if (conn->serialconnected) {
-				Sleep(1000);
-				SetCommBreak(conn->serial);
-				Sleep(1000);
-				ClearCommBreak(conn->serial);
+	switch (conn->telnet_option) {
+		case 0: /* received nothing */
+			if (ch==TELNET_OPTION_IAC) {
+				conn->telnet_option=ch;
+				return 0; /* dont echo */
 			}
-			return 2;
-		case 244:	/* Interrupt */
-			conn->option_runmenu=1;
-			return 2;
-		case 245:	/* abort output */
-			dprintf(1,"wconsd[%i]: option IAC %i\n",conn->id,buf[1]);
-			return 2;
-		case 246:	/* are you there */
-			dprintf(1,"wconsd[%i]: option IAC AYT\n",conn->id);
-			netprintf(conn,"yes\r\n");
-			return 2;
-		case 247:	/* erase character */
-		case 248:	/* erase line */
-		case 249:	/* go ahead */
-			dprintf(1,"wconsd[%i]: option IAC %i\n",conn->id,buf[1]);
-			return 2;
-		case 0xfa:	/* suboption begin */
-			if (buf[3]==0) {
-				/*
-				 * I dont expect us to get any IS statements ...
-				 * and if we do, I'm going to need to rewrite the
-				 * way chars are absorbed
-				 */
-				dprintf(1,"wconsd[%i]: option IAC SB %i IS\n",conn->id,buf[2]);
-				return 4;
-			} else if (buf[3]>1) {
-				dprintf(1,"wconsd[%i]: option IAC SB %i error\n",conn->id,buf[2]);
-				return 4;
+			return 0xff; /* ECHO */
+
+		case TELNET_OPTION_IAC:	/* recived IAC */
+			switch(ch) {
+				case 0xf0:	/* suboption end */
+				case 0xf1:	/* NOP */
+				case 0xf2:	/* Data Mark */
+				case 0xf5:	/* abort output */
+				case 0xf7:	/* erase character */
+				case 0xf8:	/* erase line */
+				case 0xf9:	/* go ahead */
+					dprintf(1,"wconsd[%i]: option IAC %i\n",conn->id,ch);
+					conn->telnet_option=0;
+					return 0; /* dont echo */
+
+				case 0xf3:	/* Break */
+					if (conn->serialconnected) {
+						dprintf(2,"wconsd[%i]: send break\n",conn->id);
+						Sleep(1000);
+						SetCommBreak(conn->serial);
+						Sleep(1000);
+						ClearCommBreak(conn->serial);
+					}
+					conn->telnet_option=0;
+					return 0; /* dont echo */
+
+				case 0xf4:	/* Interrupt */
+					conn->option_runmenu=1;
+					conn->telnet_option=0;
+					return 0; /* dont echo */
+
+				case 0xf6:	/* are you there */
+					dprintf(1,"wconsd[%i]: option IAC AYT\n",conn->id);
+					netprintf(conn,"yes\r\n");
+					conn->telnet_option=0;
+					return 0; /* dont echo */
+
+				case TELNET_OPTION_SB:
+				case TELNET_OPTION_WILL:
+				case TELNET_OPTION_WONT:
+				case TELNET_OPTION_DO:
+				case TELNET_OPTION_DONT:
+					conn->telnet_option=ch;
+					return 0; /* dont echo */
+
+				case 0xff:	/* send ff */
+					conn->telnet_option=0;
+					return ch; /* ECHO */
+
+				default:
+					dprintf(1,"wconsd[%i]: option IAC %i invalid\n",conn->id,ch);
+					conn->telnet_option=0;
+					return 0; /* dont echo */
 			}
-			dprintf(1,"wconsd[%i]: option IAC SB %i SEND\n",conn->id,buf[2]);
-			switch (buf[2]) {
-				case 5:	/* STATUS */
+
+		case TELNET_OPTION_SB:	/* received IAC SB 	0xfa */
+			conn->telnet_option=TELNET_OPTION_SBXX;
+			conn->telnet_option_param=ch;
+			return 0; /* dont echo */
+
+		case TELNET_OPTION_WILL: /* received IAC WILL 	0xfb */
+			dprintf(2,"wconsd[%i]: option IAC WILL %i\n",conn->id,ch);
+			conn->telnet_option=0;
+			return 0; /* dont echo */
+		case TELNET_OPTION_WONT: /* received IAC WONT 	0xfc */
+			dprintf(1,"wconsd[%i]: option IAC WONT %i\n",conn->id,ch);
+			conn->telnet_option=0;
+			return 0; /* dont echo */
+		case TELNET_OPTION_DO: /* received IAC DO 	0xfd */
+			switch (ch) {
+				case 0x00:	/* Binary */
+					dprintf(2,"wconsd[%i]: DO Binary\n",conn->id);
+					conn->option_binary=1;
+				case 0x01:	/* ECHO */
+					dprintf(2,"wconsd[%i]: DO ECHO\n",conn->id);
+					conn->option_echo=1;
+					break;
+				default:
+					dprintf(2,"wconsd[%i]: option IAC DO %i\n",conn->id,ch);
+					break;
+			}
+			conn->telnet_option=0;
+			return 0; /* dont echo */
+		case TELNET_OPTION_DONT: /* received IAC DONT	0xfe */
+			switch (ch) {
+				case 0x00:	/* Binary */
+					dprintf(2,"wconsd[%i]: DONT Binary\n",conn->id);
+					conn->option_binary=0;
+				case 0x01:	/* ECHO */
+					dprintf(1,"wconsd[%i]: DONT ECHO\n",conn->id);
+					conn->option_echo=0;
+					break;
+				default:
+					dprintf(2,"wconsd[%i]: option IAC DONT %i\n",conn->id,ch);
+					break;
+			}
+			conn->telnet_option=0;
+			return 0; /* dont echo */
+
+		default:
+			if (conn->telnet_option==TELNET_OPTION_SBXX) {
+				/* received IAC SB x */
+				int option = conn->telnet_option_param;
+
+				if (ch==0) {
+					/* IS */
+					dprintf(1,"wconsd[%i]: option IAC SB %i IS\n",
+						conn->id,option);
+					/*
+					 * TODO - stay in telnet option mode while
+					 * absorbing the IS buffer
+					 */
+					conn->telnet_option=0;
+					return 0; /* dont echo */
+				} else if (ch>1) {
+					/* error ? */
+					dprintf(1,"wconsd[%i]: option IAC SB %i %i\n",
+						conn->id,option,ch);
+					conn->telnet_option=0;
+					return 0; /* dont echo */
+				}
+
+				/* SEND */
+				if (option == 5) {
+					dprintf(1,"wconsd[%i]: option IAC SB 5 SEND\n",conn->id);
+					/* FIXME - add option_binary */
 					netprintf(conn,"%s%c%s%s%s",
 						"\xff\xfa\x05",
 						0,
 						"\xfb\x05",
 						conn->option_echo?"\xfb\x01":"",
 						"\xff\xf0");
+					conn->telnet_option=0;
+					return 0; /* dont echo */
+				} else {
+					/* error ? */
+					dprintf(1,"wconsd[%i]: option IAC SB %i %i\n",
+						conn->id,option,ch);
+					conn->telnet_option=0;
+					return 0; /* dont echo */
+				}
 			}
-			return 6;
-		case 0xfb:	/* WILL */
-			dprintf(2,"wconsd[%i]: option IAC WILL %i\n",conn->id,buf[2]);
-			return 3;
-		case 0xfc:	/* WONT */
-			dprintf(1,"wconsd[%i]: option IAC WONT %i\n",conn->id,buf[2]);
-			return 3;
-		case 0xfd:	/* DO */
-			switch (buf[2]) {
-				case 0x01:	/* ECHO */
-					dprintf(2,"wconsd[%i]: DO ECHO\n",conn->id);
-					conn->option_echo=1;
-					break;
-				case 0x03:	/* suppress go ahead */
-					dprintf(2,"wconsd[%i]: DO suppress go ahead\n",conn->id);
-					break;
-			}
-			return 3;
-		case 0xfe:	/* DONT */
-			switch (buf[2]) {
-				case 0x01:	/* ECHO */
-					dprintf(1,"wconsd[%i]: DONT ECHO\n",conn->id);
-					conn->option_echo=0;
-					break;
-				default:
-					dprintf(2,"wconsd[%i]: option IAC DONT %i\n",conn->id,buf[2]);
-			}
-			return 3;
-		case 0xff:	/* send ff */
-			return 1;
-		default:
-			dprintf(1,"wconsd[%i]: option IAC %i %i\n",conn->id,buf[1],buf[2]);
+
+			dprintf(1,"wconsd[%i]: invalid conn->telnet_option==%i \n",conn->id,conn->telnet_option);
+
 	}
 
 	/* not normally reached */
@@ -520,7 +606,7 @@ DWORD WINAPI wconsd_net_to_com(LPVOID lpParam)
 					closesocket(conn->net);
 					conn->net=INVALID_SOCKET;
 					conn->netconnected=0;
-					return;
+					return 0;
 				default:
 					dprintf(1,"wconsd[%i]: net_to_com socket error (%i)\n",conn->id,err);
 					/* General paranoia about blocking sockets */
@@ -534,45 +620,43 @@ DWORD WINAPI wconsd_net_to_com(LPVOID lpParam)
 		 * Scan for telnet options and process then remove them
 		 * This loop is reasonably fast if there are no options,
 		 * but recursively slow if there are options
+		 *
+		 * TODO - if an option is mid packet, this could change
+		 * the semantics of processing at the wrong point
 		 */
 		pbuf=buf;
 		bytes_to_scan=size;
-		while ((pbuf=memchr(pbuf,0xff,bytes_to_scan))!=NULL) {
-			int skip = process_telnet_option(conn, pbuf);
-
-			bytes_to_scan = size-(pbuf-buf)+skip;
-			size -= skip;
-
-			memmove(pbuf,pbuf+skip,bytes_to_scan);
-
-			/*
-			 * hack to skip quoted quotes
-			 */
-			if (skip==1) {
-				pbuf++;
+		while(bytes_to_scan--) {
+			/* TODO - use ->telnet_option || 0xff to chose to call process_telnet_option */
+			if(!process_telnet_option(conn,*pbuf)) {
+				/* remove this byte from the buffer */
+				memmove(pbuf,pbuf+1,bytes_to_scan);
+				size--;
+				continue;
 			}
+			pbuf++;
 		}
 
 		/*
 		 * Scan for CR NUL sequences and uncook them
 		 * it also appears that I need to uncook CR LF sequences
-		 * TODO - implement a "cooked" mode to bypass all this
-		 * mangling
 		 */
-		pbuf=buf;
-		bytes_to_scan=size;
-		while ((pbuf=memchr(pbuf,0x0d,bytes_to_scan))!=NULL) {
-			pbuf++;
-			if (*pbuf!=0x00&&*pbuf!=0x0a) {
-				continue;
-			}
+		if (!conn->option_binary) {
+			pbuf=buf;
+			bytes_to_scan=size;
+			while ((pbuf=memchr(pbuf,0x0d,bytes_to_scan))!=NULL) {
+				pbuf++;
+				if (*pbuf!=0x00&&*pbuf!=0x0a) {
+					continue;
+				}
 
-			bytes_to_scan = size-(pbuf-buf)+1;
-			size -= 1;
-			memmove(pbuf,pbuf+1,bytes_to_scan);
+				bytes_to_scan = size-(pbuf-buf)+1;
+				size -= 1;
+				memmove(pbuf,pbuf+1,bytes_to_scan);
+			}
+			/* TODO - emulate cisco's ctrl-^,x sequence for exit to menu */
 		}
 
-		/* TODO - emulate ciscos ctrl-^,x sequence for exit to menu */
 
 		if (conn->option_runmenu) {
 			/* TODO - if we are in menu mode, hook into the menu here */
@@ -639,11 +723,13 @@ void send_help(struct connection *conn) {
 		"\r\n"
 		"available commands:\r\n"
 		"\r\n"
+		"binary          - toggle the binary comms mode\r\n"
 		"close           - Stop serial communications\r\n"
 		"copyright       - Print the copyright notice\r\n"
 		"data            - Set number of data bits\r\n"
 		"help            - This guff\r\n"
 		"kill_conn       - Stop a given connection's serial communications\r\n"
+		"keepalive       - toggle the generation of keepalive packets\r\n"
 		"open            - Connect or resume communications with a serial port\r\n"
 		"parity          - Set the serial parity\r\n"
 		"port            - Set serial port number\r\n"
@@ -670,7 +756,8 @@ void show_status(struct connection* conn) {
 		netprintf(conn, "  state=closed\r\n\n");
 	}
 	netprintf(conn,"  connectionid=%i  hostname=%s\r\n",conn->id,hostname);
-	netprintf(conn,"  echo=%i  keepalive=%i\r\n",conn->option_echo,conn->option_keepalive);
+	netprintf(conn,"  echo=%i  binary=%i  keepalive=%i\r\n",
+		conn->option_echo,conn->option_binary,conn->option_keepalive);
 	netprintf(conn,"\r\n");
 }
 
@@ -818,25 +905,29 @@ void process_menu_line(struct connection*conn, char *line) {
 	} else if (!strcmp(command, "keepalive")) {
 		conn->option_keepalive=!conn->option_keepalive;
 		return;
+	} else if (!strcmp(command, "binary")) {
+		conn->option_binary=!conn->option_binary;
+		return;
 	} else if (!strcmp(command, "show_conn_table")) {
 		int i;
 		netprintf(conn,
 			"Flags: A - Active Slot, N - Network active, S - Serial active,\r\n"
-			"       M - Run Menu, E - Echo enabled, K - Telnet Keepalives,\r\n"
-			"       * - This connection\r\n"
+			"       M - Run Menu, B - Binary transmission, E - Echo enabled,\r\n"
+			"       K - Telnet Keepalives, * - This connection\r\n"
 			"\r\n");
 		netprintf(conn,
-				"s flags  id mThr net  netTh serial serialTh netrx nettx peer address\r\n");
+				"s flags   id mThr net  netTh serial serialTh netrx nettx peer address\r\n");
 		netprintf(conn,
-				"- ------ -- ---- ---- ----- ------ -------- ----- ----- ------------\r\n");
+				"- ------- -- ---- ---- ----- ------ -------- ----- ----- ------------\r\n");
 		for (i=0;i<MAXCONNECTIONS;i++) {
-			netprintf(conn,"%i%c%c%c%c%c%c%c %2i %4i ",
+			netprintf(conn,"%i%c%c%c%c%c%c%c%c %2i %4i ",
 				i,
 				&connection[i]==conn?'*':' ',
 				connection[i].active?'A':' ',
 				connection[i].netconnected?'N':' ',
 				connection[i].serialconnected?'S':' ',
 				connection[i].option_runmenu?'M':' ',
+				connection[i].option_binary?'B':' ',
 				connection[i].option_echo?'E':' ',
 				connection[i].option_keepalive?'K':' ',
 				connection[i].id,
@@ -905,6 +996,9 @@ void run_menu(struct connection * conn) {
 	fd_set set_read;
 	struct timeval tv;
 
+	unsigned char last_ch;
+	unsigned char ch;
+
 	/* IAC WILL ECHO */
 	/* IAC WILL suppress go ahead */
 	/* IAC WILL status */
@@ -954,10 +1048,26 @@ void run_menu(struct connection * conn) {
 		conn->net_bytes_rx+=size;
 
 		for (i = 0; i < size; i++) {
-			if (buf[i]==0) {
-				// strange, I'm not expecting nul bytes !
+			last_ch=ch;
+			ch = buf[i];
+
+			/* TODO - remove the second call to process_telnet_option */
+			if (conn->telnet_option) {
+				/* We are in the middle of handling an option */
+				process_telnet_option(conn,ch);
+				/*
+				 * return value ignored, since we dont care to
+				 * print any telnet option values in the menu.
+				 */
 				continue;
-			} else if (buf[i] == 127 || buf[i]==8) {
+			}
+			if (ch==0) {
+				/*
+				 * NULLs could occur as the second char in a
+				 * CR NUL telnet sequence
+				 */
+				continue;
+			} else if (ch==127 || ch==8) {
 				// backspace
 				if (linelen > 0) {
 					netprintf(conn,"\x08 \x08");
@@ -967,11 +1077,12 @@ void run_menu(struct connection * conn) {
 					netprintf(conn,"\x07");
 				}
 				continue;
-			} else if (buf[i] == 0x0d || buf[i]==0x0a) {
+			} else if (ch==0x0d || ch==0x0a) {
 				// detected cr or lf
 
-				if (i+1<size && (buf[i+1]==0x0a || buf[i+1]==0)) {
-					i++;
+				if (last_ch == 0x0d && ch==0x0a) {
+					/* skip the second char in CR LF */
+					continue;
 				}
 
 				if (conn->option_echo)
@@ -991,44 +1102,25 @@ void run_menu(struct connection * conn) {
 				show_prompt(conn);
 				linelen=0;
 				continue;
-			} else if (buf[i] <0x20) {
+			} else if (ch<0x20) {
 				/* ignore other ctrl chars */
 				continue;
-			} else if (buf[i]==0xff) {
-				// telnet option packet
-
+			} else if (ch==TELNET_OPTION_IAC) {
+				/* start a telnet option packet */
+				process_telnet_option(conn,ch);
 				/*
-				 * some magic to ignore quoted quotes
-				 * this will go away when we use net_to_com
-				 * to give us our data buffer
+				 * no possible return values, since IAC is
+				 * just the beginning of a telnet packet
 				 */
-				if (buf[i+1]==0xff) {
-					i++;
-					continue;
-				}
-
-				/*
-				 * Note that we avoid accessing outside the buffer
-				 * by ensuring that the buffer is larger than
-				 * the largest recv
-				 *
-				 * this doesnt help us if there is a split buffer from
-				 * the client
-				 */
-				/*
-				 * our for loop is already performing one increment,
-				 * so subtract one from the returned value
-				 */
-				i+=process_telnet_option(conn,&buf[i])-1;
 				continue;
 			} else {
 				// other chars
 
 				if (linelen < MAXLEN - 1) {
-					line[linelen] = buf[i];
+					line[linelen] = ch;
 					linelen++;
 					if (conn->option_echo) {
-						netprintf(conn,"%c",buf[i]);	/* echo */
+						netprintf(conn,"%c",ch);	/* echo */
 					}
 				} else {
 					netprintf(conn,"\x07"); /* linebuf full bell */
@@ -1160,10 +1252,13 @@ static void wconsd_main(void)
 			connection[i].serial=INVALID_HANDLE_VALUE;
 			connection[i].serialThread=NULL;
 			connection[i].option_runmenu=1;	/* start in the menu */
+			connection[i].option_binary=0;
 			connection[i].option_echo=0;
 			connection[i].option_keepalive=0;
 			connection[i].net_bytes_rx=0;
 			connection[i].net_bytes_tx=0;
+			connection[i].telnet_option=0;
+			connection[i].telnet_option_param=0;
 
 			if (connection[i].sa) {
 				/* Do lazy de-allocation so that the info is
@@ -1410,9 +1505,14 @@ int main(int argc, char **argv)
 			return 0;
 		} else if (strcmp(argv[1],"-p")==0) {
 			console_application=1;
-			default_tcpport = atoi(argv[2]);
+			if (argc>2) {
+				default_tcpport = atoi(argv[2]);
+			}
 		} else if (strcmp(argv[1],"-d")==0) {
 			console_application=1;
+			if (argc>2) {
+				dprintf_level = atoi(argv[2]);
+			}
 		} else {
 			usage();
 			return 1;
