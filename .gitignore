@@ -1,0 +1,15 @@
+#
+#
+#
+
+# Ignore the built binaries
+wconsd.exe
+portenum.exe
+
+# Also ignore any binaries from the wine build
+wconsd.exe.so
+wconsd
+
+# Ignore my simple notes until I care
+notes-xmodem.txt
+cmd.txt
