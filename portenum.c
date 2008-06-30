@@ -1,3 +1,17 @@
+/*
+ * enumerate windows serial ports
+
+Resources:
+
+http://www.lookrs232.com/com_port_programming/api_enumports.htm
+http://forum.sysinternals.com/forum_posts.asp?TID=4544
+http://www.naughter.com/enumser.html
+http://msdn.microsoft.com/en-us/library/ms793116.aspx
+http://msdn.microsoft.com/en-us/library/bb663174.aspx
+
+
+ */
+
 #include <windows.h>
 #include <stdio.h>
 #include <setupapi.h>
