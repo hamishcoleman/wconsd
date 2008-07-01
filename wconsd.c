@@ -30,6 +30,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 
+#include "scm.h"
+
 #define VERSION "0.2.6"
 
 /* Size of buffers for send and receive */
@@ -252,7 +254,7 @@ void close_serial_connection(struct connection *conn) {
 
 /* Initialise wconsd: open a listening socket and the COM port, and
  * create lots of event objects. */
-DWORD wconsd_init(DWORD argc, LPSTR *argv, DWORD *specificError)
+DWORD wconsd_init(DWORD argc, LPSTR *argv)
 {
 	struct sockaddr_in sin;
 	WORD wVersionRequested;
@@ -264,7 +266,6 @@ DWORD wconsd_init(DWORD argc, LPSTR *argv, DWORD *specificError)
 	
 	err = WSAStartup( wVersionRequested, &wsaData );
 	if ( err != 0 ) {
-		*specificError=err;
 		/* Tell the user that we could not find a usable */
 		/* WinSock DLL.                                  */
 		return 1;
@@ -289,29 +290,24 @@ DWORD wconsd_init(DWORD argc, LPSTR *argv, DWORD *specificError)
 	// Create the event object used to signal service shutdown
 	stopEvent = CreateEvent(NULL,TRUE,FALSE,NULL);
 	if (stopEvent==NULL) {
-		*specificError=GetLastError();
 		return 3;
 	}
 	// Event objects for overlapped IO
 	readEvent = CreateEvent(NULL,TRUE,FALSE,NULL);
 	if (readEvent==NULL) {
-		*specificError=GetLastError();
 		return 6;
 	}
 	writeEvent = CreateEvent(NULL,TRUE,FALSE,NULL);
 	if (writeEvent==NULL) {
-		*specificError=GetLastError();
 		return 7;
 	}
 	// Create the event object for socket operations
 	listenSocketEvent = WSACreateEvent();
 	if (listenSocketEvent==WSA_INVALID_EVENT) {
-		*specificError=WSAGetLastError();
 		return 8;
 	}
 
 	if (gethostname((char *)hostname,sizeof(hostname))==SOCKET_ERROR) {
-		*specificError=WSAGetLastError();
 		return 1;
 	}
 	dprintf(1,"wconsd: Hostname is %s\n",hostname);
@@ -331,7 +327,6 @@ DWORD wconsd_init(DWORD argc, LPSTR *argv, DWORD *specificError)
 	sin.sin_port=htons(default_tcpport);
 	ls=socket(AF_INET,SOCK_STREAM,0);
 	if (ls==INVALID_SOCKET) {
-		*specificError=WSAGetLastError();
 		return 9;
 	}
 #ifndef MS_WINDOWS
@@ -341,12 +336,10 @@ DWORD wconsd_init(DWORD argc, LPSTR *argv, DWORD *specificError)
 	}
 #endif
 	if (bind(ls,(struct sockaddr *)&sin,sizeof(sin))==SOCKET_ERROR) {
-		*specificError=WSAGetLastError();
 		dprintf(1,"wconsd: wconsd_init: failed to bind socket\n");
 		return 10;
 	}
 	if (listen(ls,1)==SOCKET_ERROR) {
-		*specificError=WSAGetLastError();
 		return 11;
 	}
 	dprintf(1,"wconsd: listening on port %i\n",default_tcpport);
@@ -354,7 +347,6 @@ DWORD wconsd_init(DWORD argc, LPSTR *argv, DWORD *specificError)
 
 	/* Mark the socket as non-blocking */
 	if (WSAEventSelect(ls,listenSocketEvent,FD_ACCEPT)==SOCKET_ERROR) {
-		*specificError=WSAGetLastError();
 		return 12;
 	}
 
@@ -1333,7 +1325,6 @@ VOID WINAPI MyServiceCtrlHandler(DWORD opcode)
 VOID WINAPI ServiceStart(DWORD argc, LPSTR *argv)
 {
 	DWORD status;
-	DWORD specificError;
 
 	wconsd_status.dwServiceType = SERVICE_WIN32;
 	wconsd_status.dwCurrentState = SERVICE_START_PENDING;
@@ -1349,14 +1340,14 @@ VOID WINAPI ServiceStart(DWORD argc, LPSTR *argv)
 		return;
 	}
 
-	status = wconsd_init(argc, argv, &specificError);
+	status = wconsd_init(argc, argv);
 
 	if (status != NO_ERROR) {
 		wconsd_status.dwCurrentState = SERVICE_STOPPED;
 		wconsd_status.dwCheckPoint = 0;
 		wconsd_status.dwWaitHint = 0;
 		wconsd_status.dwWin32ExitCode = status;
-		wconsd_status.dwServiceSpecificExitCode = specificError;
+		wconsd_status.dwServiceSpecificExitCode = 0;
 
 		SetServiceStatus(wconsd_statusHandle, &wconsd_status);
 		return;
@@ -1459,6 +1450,12 @@ int main(int argc, char **argv)
 		{ NULL, NULL }
 	};
 
+	struct servicedef sd = {
+		"wconsd","wconsd - Telnet to Serial server",
+		wconsd_init, wconsd_main,
+		0
+	};
+
 	// debug info for when I test this as a service
 	dprintf(1,"wconsd: started with argc==%i\n",argc);
 
@@ -1467,15 +1464,19 @@ int main(int argc, char **argv)
 		// assume that our messages are going to the debug log
 		debug_mode=0;
 
-		// start by trying to run as a service
-		if (StartServiceCtrlDispatcher(DispatchTable)==0) {
-			err = GetLastError();
-			dprintf(1,"wconsd: StartServiceCtrlDispatcher error = %d\n", err);
-
-			if (err != ERROR_FAILED_SERVICE_CONTROLLER_CONNECT) {
-				// any other error, assume fatal
-				return 1;
-			}
+//		// start by trying to run as a service
+//		if (StartServiceCtrlDispatcher(DispatchTable)==0) {
+//			err = GetLastError();
+//			dprintf(1,"wconsd: StartServiceCtrlDispatcher error = %d\n", err);
+//
+//			if (err != ERROR_FAILED_SERVICE_CONTROLLER_CONNECT) {
+//				// any other error, assume fatal
+//				return 1;
+//			}
+//		}
+		err = SCM_Start(&sd);
+		if (err!=SVC_CONSOLE) {
+			return 0;
 		}
 
 		// fall through and try running as a command-line application
@@ -1497,11 +1498,13 @@ int main(int argc, char **argv)
 				usage();
 				return 1;
 			}
-			RegisterService(argv[2]);
+			// RegisterService(argv[2]);
+			SCM_Install(&sd);
 			return 0;
 		} else if (strcmp(argv[1],"-r")==0) {
 			// request service removal
-			RemoveService();
+			// RemoveService();
+			SCM_Remove(&sd);
 			return 0;
 		} else if (strcmp(argv[1],"-p")==0) {
 			console_application=1;
@@ -1523,9 +1526,9 @@ int main(int argc, char **argv)
 	if (console_application) {
 		int r;
 		dprintf(1,"wconsd: Foreground mode\n");
-		r=wconsd_init(argc,argv,&err);
+		r=wconsd_init(argc,argv);
 		if (r!=0) {
-			dprintf(1,"wconsd: wconsd_init failed, return code %d [%l]\n",r, err);
+			dprintf(1,"wconsd: wconsd_init failed, return code %d\n",r);
 			return 1;
 		}
 		wconsd_main();
