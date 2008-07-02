@@ -170,7 +170,7 @@ int netprintf(struct connection *conn, const char *fmt, ...) {
 }
 
 /* open the com port */
-DWORD open_com_port(struct connection *conn, DWORD *specificError) {
+int open_com_port(struct connection *conn) {
 	/* Open the COM port */
 	char portstr[12];
 
@@ -187,13 +187,11 @@ DWORD open_com_port(struct connection *conn, DWORD *specificError) {
 		FILE_FLAG_OVERLAPPED,
 		NULL);
 	if (conn->serial == INVALID_HANDLE_VALUE) {
-		*specificError=GetLastError();
-		return 13;
+		return -1;
 	}
 
 	if (!GetCommState(conn->serial, &dcb)) {
-		*specificError=GetLastError();
-		return 14;
+		return -1;
 	}
 
 	// Fill in the device control block
@@ -215,8 +213,7 @@ DWORD open_com_port(struct connection *conn, DWORD *specificError) {
 	dcb.fAbortOnError=FALSE;
 
 	if (!SetCommState(conn->serial, &dcb)) {
-		*specificError=GetLastError();
-		return 15;
+		return -1;
 	}
 
 	/* FIXME - these values need much more tuning */
@@ -230,8 +227,7 @@ DWORD open_com_port(struct connection *conn, DWORD *specificError) {
 	timeouts.WriteTotalTimeoutMultiplier=0;
 	timeouts.WriteTotalTimeoutConstant=0;
 	if (!SetCommTimeouts(conn->serial, &timeouts)) {
-		*specificError=GetLastError();
-		return 16;
+		return -1;
 	}
 	conn->serialconnected=1;
 	return 0;
@@ -721,6 +717,37 @@ DWORD WINAPI wconsd_com_to_net(LPVOID lpParam)
 	return 0;
 }
 
+void do_serial(struct connection *conn) {
+	dprintf(1,"wconsd[%i]: debug: start do_serial\n",conn->id);
+	conn->option_runmenu=0;
+
+	if (!conn->netconnected) {
+		/* what are we doing here then ??? */
+		return;
+	}
+
+	if (!conn->serialconnected) {
+		if (open_com_port(conn)) {
+			netprintf(conn,"error: cannot open port\r\n\n");
+		}
+	}
+
+	netprintf(conn,"\r\n\n");
+
+	PurgeComm(conn->serial,PURGE_RXCLEAR|PURGE_RXABORT);
+	if (conn->serialThread==NULL) {
+		/* we might already have a com_to_net thread */
+		conn->serialThread=CreateThread(NULL,0,wconsd_com_to_net,conn,0,NULL);
+	}
+
+	conn->netThread=CreateThread(NULL,0,wconsd_net_to_com,conn,0,NULL);
+	WaitForSingleObject(conn->netThread,INFINITE);
+	CloseHandle(conn->netThread);
+	conn->netThread=NULL;
+
+	conn->option_runmenu=1;
+}
+
 void send_help(struct connection *conn) {
 	netprintf(conn,
 		"NOTE: the commands will be changing in the next version\r\n"
@@ -874,7 +901,6 @@ void process_menu_line(struct connection*conn, char *line) {
 		}
 		show_status(conn);
 	} else if (!strcmp(command, "open")) {		// open
-		DWORD errcode;
 		int new = check_atoi(parameter1,com_port,conn,"Opening default port\r\n");
 
 		if (new >= 1 && new <= 16) {
@@ -888,7 +914,7 @@ void process_menu_line(struct connection*conn, char *line) {
 			return;
 		}
 
-		if (!open_com_port(conn,&errcode)) {
+		if (!open_com_port(conn)) {
 			netprintf(conn,"\r\n\n");
 			// signal to quit the menu
 			conn->option_runmenu=0;
@@ -896,6 +922,9 @@ void process_menu_line(struct connection*conn, char *line) {
 		} else {
 			netprintf(conn,"error: cannot open port\r\n\n");
 		}
+	} else if (!strcmp(command, "opentest")) {
+		netprintf(conn,"Testing\r\n");
+		do_serial(conn);
 	} else if (!strcmp(command, "close")) {			// close
 		close_serial_connection(conn);
 		netprintf(conn,"info: actual com port closed\r\n\n");
