@@ -106,6 +106,15 @@ struct connection {
 };
 struct connection connection[MAXCONNECTIONS];
 
+
+int wconsd_init(int argc, char **argv);
+int wconsd_main(int param1);
+int wconsd_stop(int param1);
+struct SCM_def sd = {
+	"wconsd","wconsd - Telnet to Serial server",
+	wconsd_init, wconsd_main, wconsd_stop
+};
+
 /* 
  * output from OutputDebugStringA can be seen using sysinternals debugview
  * http://technet.microsoft.com/en-us/sysinternals/bb896647.aspx
@@ -251,11 +260,14 @@ void close_serial_connection(struct connection *conn) {
 	conn->serialThread=NULL;
 }
 
+int wconsd_stop(int param1) {
+	SetEvent(stopEvent);
+	return 0;
+}
 
 /* Initialise wconsd: open a listening socket and the COM port, and
  * create lots of event objects. */
-DWORD wconsd_init(DWORD argc, LPSTR *argv)
-{
+int wconsd_init(int argc, char **argv) {
 	struct sockaddr_in sin;
 	WORD wVersionRequested;
 	WSADATA wsaData;
@@ -1172,7 +1184,7 @@ DWORD WINAPI thread_new_connection(LPVOID lpParam) {
 	return 0;
 }
 
-static void wconsd_main(void)
+int wconsd_main(int param1)
 {
 	HANDLE wait_array[2];
 	BOOL run=TRUE;
@@ -1284,157 +1296,14 @@ static void wconsd_main(void)
 
 	closesocket(ls);
 	WSACleanup();
-}
-
-VOID WINAPI MyServiceCtrlHandler(DWORD opcode)
-{
-	DWORD status;
-
-	switch(opcode) {
-	case SERVICE_CONTROL_STOP:
-		wconsd_status.dwWin32ExitCode = 0;
-		wconsd_status.dwCurrentState = SERVICE_STOP_PENDING;
-		wconsd_status.dwCheckPoint = 0;
-		wconsd_status.dwWaitHint = 0;
-
-		if (!SetServiceStatus(wconsd_statusHandle, &wconsd_status)) {
-			status = GetLastError();
-			dprintf(1,"wconsd: SetServiceStatus error %ld\n",status);
-		}
-
-		SetEvent(stopEvent);
-		break;
-
-	case SERVICE_CONTROL_INTERROGATE:
-		// fall through to send current status
-		break;
-
-	default:
-		dprintf(1,"wconsd: unrecognised opcode %ld\n",opcode);
-		break;
-	}
-
-	// Send current status
-	if (!SetServiceStatus(wconsd_statusHandle, &wconsd_status)) {
-		status = GetLastError();
-		dprintf(1,"wconsd: SetServiceStatus error %ld\n",status);
-	}
-	return;
-}
-
-VOID WINAPI ServiceStart(DWORD argc, LPSTR *argv)
-{
-	DWORD status;
-
-	wconsd_status.dwServiceType = SERVICE_WIN32;
-	wconsd_status.dwCurrentState = SERVICE_START_PENDING;
-	wconsd_status.dwControlsAccepted = SERVICE_ACCEPT_STOP;
-	wconsd_status.dwWin32ExitCode = 0;
-	wconsd_status.dwServiceSpecificExitCode = 0;
-	wconsd_status.dwCheckPoint = 0;
-	wconsd_status.dwWaitHint = 0;
-	wconsd_statusHandle = RegisterServiceCtrlHandler(TEXT("wconsd"),MyServiceCtrlHandler);
-
-	if (wconsd_statusHandle == (SERVICE_STATUS_HANDLE)0) {
-		dprintf(1,"wconsd: RegisterServiceCtrlHandler failed %d\n", GetLastError());
-		return;
-	}
-
-	status = wconsd_init(argc, argv);
-
-	if (status != NO_ERROR) {
-		wconsd_status.dwCurrentState = SERVICE_STOPPED;
-		wconsd_status.dwCheckPoint = 0;
-		wconsd_status.dwWaitHint = 0;
-		wconsd_status.dwWin32ExitCode = status;
-		wconsd_status.dwServiceSpecificExitCode = 0;
-
-		SetServiceStatus(wconsd_statusHandle, &wconsd_status);
-		return;
-	}
-
-	/* Initialisation complete - report running status */
-	wconsd_status.dwCurrentState = SERVICE_RUNNING;
-	wconsd_status.dwCheckPoint = 0;
-	wconsd_status.dwWaitHint = 0;
-
-	if (!SetServiceStatus(wconsd_statusHandle, &wconsd_status)) {
-		status = GetLastError();
-		dprintf(1,"wconsd: SetServiceStatus error %ld\n",status);
-	}
-
-	wconsd_main();
-
-	wconsd_status.dwCurrentState = SERVICE_STOPPED;
-	wconsd_status.dwCheckPoint = 0;
-	wconsd_status.dwWaitHint = 0;
-	wconsd_status.dwWin32ExitCode = 0;
-	wconsd_status.dwServiceSpecificExitCode = 0;
-
-	SetServiceStatus(wconsd_statusHandle, &wconsd_status);
-
-	return;
-}
-
-static void RegisterService(LPSTR path)
-{
-	SC_HANDLE schSCManager, schService;
-
-	schSCManager = OpenSCManager(NULL, NULL, SC_MANAGER_ALL_ACCESS);
-
-	schService = CreateService(
-		schSCManager,
-		TEXT("wconsd"),
-		TEXT("wconsd - a serial port server"),
-		SERVICE_ALL_ACCESS,
-		SERVICE_WIN32_OWN_PROCESS,
-		SERVICE_AUTO_START,
-		SERVICE_ERROR_NORMAL,
-		path,
-		NULL, NULL, NULL, NULL, NULL);
-
-	if (schService == NULL) {
-		printf("CreateService failed\n");
-	} else {
-		printf("Created service 'wconsd', binary path %s\n",path);
-		printf("You should now start the service using the service manager.\n");
-	}
-	CloseServiceHandle(schService);
-}
-
-static void RemoveService(void)
-{
-	SC_HANDLE schSCManager, schService;
-
-	schSCManager = OpenSCManager(NULL, NULL, SC_MANAGER_ALL_ACCESS);
-	if (schSCManager == NULL) {
-		printf("Couldn't open service manager\n");
-		return;
-	}
-
-	schService = OpenService(schSCManager, TEXT("wconsd"), DELETE);
-
-	if (schService == NULL) {
-		printf("Couldn't open wconsd service\n");
-		return;
-	}
-
-	if (!DeleteService(schService)) {
-		printf("Couldn't delete wconsd service\n");
-		return;
-	}
-
-	printf("Deleted service 'wconsd'\n");
-
-	CloseServiceHandle(schService);
+	return 0;
 }
 
 static void usage(void)
 {
 	printf("Usage: wconsd [-i pathname | -r | -d | -p port ]\n");
 	printf("Just start with no options to start server\n");
-	printf("   -i pathname     install service 'wconsd'; pathname\n");
-	printf("                   must be the full path to the binary\n");
+	printf("   -i              install service 'wconsd'\n");
 	printf("   -r              remove service 'wconsd'\n");
 	printf("   -d              run wconsd in foreground mode\n");
 	printf("   -p port         listen on the given port in foreground mode\n");
@@ -1444,17 +1313,6 @@ int main(int argc, char **argv)
 {
 	DWORD err;
 	int console_application=0;
-	SERVICE_TABLE_ENTRY DispatchTable[] =
-	{
-		{ "wconsd", ServiceStart },
-		{ NULL, NULL }
-	};
-
-	struct servicedef sd = {
-		"wconsd","wconsd - Telnet to Serial server",
-		wconsd_init, wconsd_main,
-		0
-	};
 
 	// debug info for when I test this as a service
 	dprintf(1,"wconsd: started with argc==%i\n",argc);
@@ -1464,16 +1322,6 @@ int main(int argc, char **argv)
 		// assume that our messages are going to the debug log
 		debug_mode=0;
 
-//		// start by trying to run as a service
-//		if (StartServiceCtrlDispatcher(DispatchTable)==0) {
-//			err = GetLastError();
-//			dprintf(1,"wconsd: StartServiceCtrlDispatcher error = %d\n", err);
-//
-//			if (err != ERROR_FAILED_SERVICE_CONTROLLER_CONNECT) {
-//				// any other error, assume fatal
-//				return 1;
-//			}
-//		}
 		err = SCM_Start(&sd);
 		if (err!=SVC_CONSOLE) {
 			return 0;
@@ -1494,16 +1342,10 @@ int main(int argc, char **argv)
 	if (argc>1) {
 		if (strcmp(argv[1],"-i")==0) {
 			// request service installation
-			if (argc!=3) {
-				usage();
-				return 1;
-			}
-			// RegisterService(argv[2]);
 			SCM_Install(&sd);
 			return 0;
 		} else if (strcmp(argv[1],"-r")==0) {
 			// request service removal
-			// RemoveService();
 			SCM_Remove(&sd);
 			return 0;
 		} else if (strcmp(argv[1],"-p")==0) {
@@ -1526,12 +1368,13 @@ int main(int argc, char **argv)
 	if (console_application) {
 		int r;
 		dprintf(1,"wconsd: Foreground mode\n");
+
 		r=wconsd_init(argc,argv);
 		if (r!=0) {
 			dprintf(1,"wconsd: wconsd_init failed, return code %d\n",r);
 			return 1;
 		}
-		wconsd_main();
+		wconsd_main(0);
 	}
 
 	return 0;

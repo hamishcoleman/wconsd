@@ -4,17 +4,17 @@
  *
  */
 
-struct servicedef {
+struct SCM_def {
 	unsigned char *name;
 	unsigned char *desc;
 	int (*init)(int, char **);
 	int (*main)(int);
-	HANDLE stopEvent;
+	int (*stop)(int);
 };
 
-int SCM_Start(struct servicedef *);
-int SCM_Install(struct servicedef *);
-int SCM_Remove(struct servicedef *);
+int SCM_Start(struct SCM_def *);
+int SCM_Install(struct SCM_def *);
+int SCM_Remove(struct SCM_def *);
 
 #define SVC_OK		0
 #define	SVC_FAIL	-1

@@ -33,14 +33,14 @@ SERVICE_STATUS svcStatus;
 SERVICE_STATUS_HANDLE svcHandle;
 
 /* global pointer to our service definition */
-struct servicedef *global_sd;
+struct SCM_def *global_sd;
 
 VOID WINAPI ServiceCtrlHandler(DWORD opcode) {
 	svcStatus.dwWin32ExitCode = NO_ERROR;
 	if (opcode == SERVICE_CONTROL_STOP) {
 		svcStatus.dwCurrentState = SERVICE_STOP_PENDING;
 		SetServiceStatus( svcHandle, &svcStatus );
-		SetEvent(global_sd->stopEvent);
+		global_sd->stop(0);
 		return;
 	}
 	SetServiceStatus( svcHandle, &svcStatus );
@@ -49,12 +49,12 @@ VOID WINAPI ServiceCtrlHandler(DWORD opcode) {
 VOID WINAPI ServiceMain(DWORD argc, LPSTR *argv)
 {
 	int err;
-	struct servicedef *sd = global_sd;
+	struct SCM_def *sd = global_sd;
 
 	svcHandle = RegisterServiceCtrlHandler(sd->name,ServiceCtrlHandler);
 	if (!svcHandle) {
 		/* FIXME - use SvcReportEvent() */
-		printf("RegisterServiceCtrlHandler failed %u\n", GetLastError());
+		printf("RegisterServiceCtrlHandler failed %d\n", GetLastError());
 		return;
 	}
 
@@ -70,14 +70,6 @@ VOID WINAPI ServiceMain(DWORD argc, LPSTR *argv)
 	svcStatus.dwCurrentState = SERVICE_START_PENDING;
 	SetServiceStatus( svcHandle, &svcStatus );
 
-	/* Create the event object used to signal service shutdown */
-	sd->stopEvent = CreateEvent(NULL,TRUE,FALSE,NULL);
-	if (sd->stopEvent==NULL) {
-		svcStatus.dwCurrentState = SERVICE_STOPPED;
-		SetServiceStatus( svcHandle, &svcStatus );
-		return;
-	}
-
 	if ((err=sd->init(argc,argv))!=0) {
 		svcStatus.dwCurrentState = SERVICE_STOPPED;
 		svcStatus.dwWin32ExitCode = err;
@@ -89,10 +81,7 @@ VOID WINAPI ServiceMain(DWORD argc, LPSTR *argv)
 	svcStatus.dwWin32ExitCode = NO_ERROR;
 	SetServiceStatus( svcHandle, &svcStatus );
 
-	/* Loop until we are stopping */
-	while(WaitForSingleObject(sd->stopEvent, 0)==WAIT_TIMEOUT) {
-		err=sd->main(0);
-	}
+	err=sd->main(0);
 
 	svcStatus.dwCurrentState = SERVICE_STOPPED;
 	svcStatus.dwWin32ExitCode = NO_ERROR;
@@ -100,7 +89,7 @@ VOID WINAPI ServiceMain(DWORD argc, LPSTR *argv)
 	return;
 }
 
-int SCM_Start(struct servicedef *sd) {
+int SCM_Start(struct SCM_def *sd) {
 	SERVICE_TABLE_ENTRY ServiceTable[] = {
 		{ "", ServiceMain },
 		{ NULL, NULL }
@@ -124,13 +113,13 @@ int SCM_Start(struct servicedef *sd) {
 	return SVC_OK;
 }
 
-int SCM_Install(struct servicedef *sd) {
+int SCM_Install(struct SCM_def *sd) {
 	SC_HANDLE schSCManager, schService;
 
 	char path[MAX_PATH];
 
 	if( !GetModuleFileName( NULL, path, MAX_PATH ) ) {
-		printf("Cannot install service (%u)\n", GetLastError());
+		printf("Cannot install service (%d)\n", GetLastError());
 		return -1;
 	}
 
@@ -159,7 +148,7 @@ int SCM_Install(struct servicedef *sd) {
 	}
 }
 
-int SCM_Remove(struct servicedef *sd) {
+int SCM_Remove(struct SCM_def *sd) {
 	SC_HANDLE schSCManager, schService;
 
 	schSCManager = OpenSCManager(NULL, NULL, SC_MANAGER_ALL_ACCESS);
