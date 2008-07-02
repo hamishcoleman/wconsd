@@ -100,7 +100,6 @@ int SCM_Start(struct SCM_def *sd) {
 	/* try to run as a service */
 	if (StartServiceCtrlDispatcher(ServiceTable)==0) {
 		int err = GetLastError();
-		printf("StartServiceCtrlDispatcher error = %d\n", err);
 
 		if (err == ERROR_FAILED_SERVICE_CONTROLLER_CONNECT) {
 			/* TODO - could run the console service from here */
@@ -108,19 +107,20 @@ int SCM_Start(struct SCM_def *sd) {
 		}
 
 		/* any other error, assume fatal */
+		printf("StartServiceCtrlDispatcher failed %d\n", err);
 		return SVC_FAIL;
 	}
 	return SVC_OK;
 }
 
-int SCM_Install(struct SCM_def *sd) {
+char *SCM_Install(struct SCM_def *sd) {
 	SC_HANDLE schSCManager, schService;
 
-	char path[MAX_PATH];
+	static char path[MAX_PATH];
 
 	if( !GetModuleFileName( NULL, path, MAX_PATH ) ) {
-		printf("Cannot install service (%d)\n", GetLastError());
-		return -1;
+		printf("GetModuleFileName failed %d\n", GetLastError());
+		return NULL;
 	}
 
 	schSCManager = OpenSCManager(NULL, NULL, SC_MANAGER_ALL_ACCESS);
@@ -139,13 +139,11 @@ int SCM_Install(struct SCM_def *sd) {
 	if (schService == NULL) {
 		printf("CreateService failed\n");
 		CloseServiceHandle(schService);
-		return -1;
-	} else {
-		printf("Created service '%s', binary path %s\n",sd->name,path);
-		printf("You should now start the service using the service manager.\n");
-		CloseServiceHandle(schService);
-		return 0;
+		return NULL;
 	}
+
+	CloseServiceHandle(schService);
+	return (char *)&path;
 }
 
 int SCM_Remove(struct SCM_def *sd) {
@@ -167,8 +165,6 @@ int SCM_Remove(struct SCM_def *sd) {
 		printf("Couldn't delete %s service\n",sd->name);
 		return -1;
 	}
-
-	printf("Deleted service '%s'\n",sd->name);
 
 	CloseServiceHandle(schService);
 	return 0;

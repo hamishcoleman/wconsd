@@ -10,11 +10,14 @@ put:
 CFLAGS:=-Wall
 CC:=gcc
 
+wconsd.c: debug.h scm.h
+win-scm.c: scm.h
+
 wconsd.exe: wconsd.o win-scm.o
 	$(CC) -o $@ $^ -lws2_32
 
 portenum.exe: portenum.c
-	$(CC) -o $@ portenum.c -lwinspool -lsetupapi
+	$(CC) $(CFLAGS) -o $@ portenum.c -lwinspool -lsetupapi
 
 test: wconsd.exe
 	./wconsd.exe -d

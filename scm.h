@@ -13,7 +13,7 @@ struct SCM_def {
 };
 
 int SCM_Start(struct SCM_def *);
-int SCM_Install(struct SCM_def *);
+char *SCM_Install(struct SCM_def *);
 int SCM_Remove(struct SCM_def *);
 
 #define SVC_OK		0

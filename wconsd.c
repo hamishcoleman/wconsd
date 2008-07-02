@@ -1341,12 +1341,23 @@ int main(int argc, char **argv)
 
 	if (argc>1) {
 		if (strcmp(argv[1],"-i")==0) {
-			// request service installation
-			SCM_Install(&sd);
+			/* request service installation */
+			char *path = SCM_Install(&sd);
+			if (!path) {
+				printf("Service installation failed\n");
+				return 1;
+			}
+			printf("Service '%s' installed, binary path '%s'\n",sd.name,path);
+			printf("You should now start the service using the service manager.\n");
 			return 0;
 		} else if (strcmp(argv[1],"-r")==0) {
 			// request service removal
-			SCM_Remove(&sd);
+			if (SCM_Remove(&sd)==0) {
+				printf("Deleted service '%s'\n",sd.name);
+			} else {
+				printf("Service removal failed\n");
+				return 1;
+			}
 			return 0;
 		} else if (strcmp(argv[1],"-p")==0) {
 			console_application=1;
