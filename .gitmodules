@@ -1,0 +1,3 @@
+[submodule "libcli"]
+	path = libcli
+	url = /home/hamish/s/src/libcli/libcli.git/.git
