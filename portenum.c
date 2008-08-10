@@ -10,6 +10,17 @@ http://msdn.microsoft.com/en-us/library/ms793116.aspx
 http://msdn.microsoft.com/en-us/library/bb663174.aspx
 
 
+HKEY_LOCAL_MACHINE\HARDWARE\DEVICEMAP\SERIALCOMM
+
+	key = device driver name
+	val = COMn name
+
+
+HKLM \ SYSTEM \ CurrentControlSet\Enum\ * *
+	PortName
+
+http://msdn.microsoft.com/en-us/library/ms800601.aspx
+
  */
 
 #include <windows.h>
@@ -110,7 +121,7 @@ int m3() {
 
 	int i=0;
 
-	printf("\n\nGet something\n\n");	
+	printf("\n\nGet DiGetDeviceInterfaceDetail\n\n");
 
 	SetupDiClassGuidsFromName("Ports",NULL,0,&bufsize);
 	if(!bufsize){printf("size==0!!\n");return 1;}
@@ -155,6 +166,10 @@ int m3() {
 		}
 
 		printf("DevicePath=%s\n",didatad->DevicePath);
+
+//		reg = SetupDiOpenDevRegKey(diset,&didata,DICS_FLAG_GLOBAL,0,DIREG_DEV, KEY_ALL_ACCESS);
+
+		printf("\n");
 	
 		free(didatad);	
 		i++;
@@ -166,11 +181,30 @@ int m3() {
 	return 0;
 }
 
+int qdosdev() {
+	static char buf[65535];
+	char *p;
+
+	printf("\n\nGet QueryDosDevice\n\n");
+
+	if(QueryDosDevice(NULL, buf, sizeof(buf)) == 0) {
+		printf("QueryDosDevice: failed\n");
+		return 1;
+	}
+
+	p=&buf;
+	while (*p) {
+		p+=printf("%s\n",p);
+	}
+	return 0;
+}
+
 int main(int argc, char **argv) {
 
-	enumports_level1();
+	//enumports_level1();
 	enumports_level2();
 	m3();
+	qdosdev();
 
 	return 0;
 }
