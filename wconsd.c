@@ -32,6 +32,8 @@
 
 #include "scm.h"
 
+#include "libcli/libcli.h"
+
 #define VERSION "0.2.6"
 
 /* Size of buffers for send and receive */
@@ -104,6 +106,7 @@ struct connection {
 };
 struct connection connection[MAXCONNECTIONS];
 
+struct cli_def *cli;
 
 int wconsd_init(int argc, char **argv);
 int wconsd_main(int param1);
@@ -259,6 +262,17 @@ int wconsd_stop(int param1) {
 	return 0;
 }
 
+int libcli_test(struct cli_def *cli, char *command, char *argv[], int argc) {
+	int i;
+	cli_print(cli, "called %s with \"%s\"", __FUNCTION__, command);
+	cli_print(cli, "%d arguments:", argc);
+	for (i = 0; i < argc; i++)
+		cli_print(cli, "        %s", argv[i]);
+
+	return CLI_OK;
+}
+
+
 /* Initialise wconsd: open a listening socket and the COM port, and
  * create lots of event objects. */
 int wconsd_init(int argc, char **argv) {
@@ -355,6 +369,22 @@ int wconsd_init(int argc, char **argv) {
 	if (WSAEventSelect(ls,listenSocketEvent,FD_ACCEPT)==SOCKET_ERROR) {
 		return 12;
 	}
+
+	if (!(cli = cli_init())) {
+		dprintf(1,"wconsd: wconsd_init: failed run cli_init\n");
+		return 13;
+	}
+	cli_set_banner(cli, "wconsd serial to telnet");
+	cli_set_hostname(cli, (char *)hostname);
+	cli_set_idle_timeout(cli, 60);
+	cli_register_command(cli, NULL, "test", libcli_test, PRIVILEGE_UNPRIVILEGED,
+		MODE_EXEC, NULL);
+#if 0
+	cli_set_auth_callback(cli, check_auth);
+	cli_set_enable_callback(cli, check_enable);
+#endif
+
+
 
 	return 0;
 }
@@ -973,6 +1003,8 @@ void process_menu_line(struct connection*conn, char *line) {
 		netprintf(&connection[i],"Serial Connection Closed by Connection ID %i\r\n",conn->id);
 		close_serial_connection(&connection[i]);
 		netprintf(conn,"Connection ID %i serial port closed\r\n",connid);
+	} else if (!strcmp(command, "menu")) {
+		cli_loop(cli,conn->net);
 	} else {
 		/* other, unknown commands */
 		netprintf(conn,"\r\nInvalid Command: '%s'\r\n\r\n",line);

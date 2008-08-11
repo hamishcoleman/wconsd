@@ -10,10 +10,12 @@ put:
 CFLAGS:=-Wall
 CC:=gcc
 
+LIBCLI:=libcli/libcli.o
+
 wconsd.c: debug.h scm.h
 win-scm.c: scm.h
 
-wconsd.exe: wconsd.o win-scm.o
+wconsd.exe: wconsd.o win-scm.o $(LIBCLI)
 	$(CC) -o $@ $^ -lws2_32
 
 portenum.exe: portenum.c
