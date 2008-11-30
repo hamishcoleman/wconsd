@@ -301,11 +301,11 @@ static int do_getopt(const int argc, char **argv) {
 				char *path = SCM_Install(&sd);
 				if (!path) {
 					printf("Service installation failed\n");
-					return 1;
+					return 2;
 				}
 				printf("Service '%s' installed, binary path '%s'\n",sd.name,path);
 				printf("You should now start the service using the service manager.\n");
-				return 0;
+				return 1;
 			}
 			case 'r':
 				// request service removal
@@ -314,7 +314,7 @@ static int do_getopt(const int argc, char **argv) {
 				} else {
 					printf("Service removal failed\n");
 				}
-				return 0;
+				return 1;
 			case 'd':
 				if (optarg) {
 					dprintf_level = atoi(optarg);
@@ -327,10 +327,10 @@ static int do_getopt(const int argc, char **argv) {
 				break;
 			default:
 				usage("wconsd",long_options);
-				exit(EXIT_FAILURE);
+				return 1;
 		}
 	}
-	return 1;
+	return 0;
 }
 
 int wconsd_stop(int param1) {
@@ -377,7 +377,10 @@ int wconsd_init(int argc, char **argv) {
 	modules_init(cli);
 
 	/* handle commandline options */
-	do_getopt(argc,argv);
+	if (do_getopt(argc,argv)) {
+		/* do_getopt returns nonzero if we should not continue */
+		return 1;
+	}
 
 	/* Start up sockets */
 	wVersionRequested = MAKEWORD( 2, 2 );
