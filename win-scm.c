@@ -95,7 +95,6 @@ int SCM_Start_Console(int argc, char **argv) {
 	global_sd->mode=SVC_CONSOLE;
 	int err = global_sd->init(argc,argv);
 	if (err!=0) {
-		printf("SCM_Start_Console: init failed, return code %d\n",err);
 		return SVC_FAIL;
 	}
 

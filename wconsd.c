@@ -1399,7 +1399,6 @@ int main(int argc, char **argv)
 	dprintf_to_stdout=0;
 
 	if (SCM_Start(&sd,argc,argv)!=SVC_OK) {
-		dprintf(1,"Service startup failed\n");
 		return 1;
 	}
 
