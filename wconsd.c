@@ -70,7 +70,6 @@ struct hostent *host_entry;
 SERVICE_STATUS wconsd_status;
 SERVICE_STATUS_HANDLE wconsd_statusHandle;
 
-int debug_mode = 0;
 
 /* these match the official telnet codes */
 #define TELNET_OPTION_SB	0xfa
@@ -126,6 +125,7 @@ struct SCM_def sd = {
  * log a debug message
  */
 int dprintf_level = 1;
+int dprintf_to_stdout = 0;
 int dprintf(unsigned char severity, const char *fmt, ...) {
 	va_list args;
 	char buf[MAXLEN];
@@ -138,7 +138,7 @@ int dprintf(unsigned char severity, const char *fmt, ...) {
 	i=vsnprintf(buf,sizeof(buf),fmt,args);
 	va_end(args);
 
-	if (debug_mode) {
+	if (dprintf_to_stdout) {
 		printf("%s",buf);
 	} else {
 		OutputDebugStringA(buf);
@@ -1381,7 +1381,7 @@ int main(int argc, char **argv)
 	if (argc==1 || argc==0) {
 
 		// assume that our messages are going to the debug log
-		debug_mode=0;
+		dprintf_to_stdout=0;
 
 		if (SCM_Start(&sd)!=SVC_CONSOLE) {
 			return 0;
@@ -1391,7 +1391,7 @@ int main(int argc, char **argv)
 	}
 
 	// We are running in debug mode (or any other command-line mode)
-	debug_mode=1;
+	dprintf_to_stdout=1;
 
 	dprintf(1,"\n"
 		"wconsd: Serial Console server (version %s)\n",VERSION);
