@@ -8,14 +8,19 @@ put:
 	pscp ./*.exe ./*.c 192.168.1.1:s/src/wconsd/
 
 CFLAGS:=-Wall
-CC:=gcc
+#CC:=gcc
+CC:=i586-mingw32msvc-gcc
 
 LIBCLI:=libcli/libcli.o
 
 wconsd.c: debug.h scm.h
 win-scm.c: scm.h
 
-wconsd.exe: wconsd.o win-scm.o $(LIBCLI)
+modules.c: module.h
+
+MODULES:=modules.o win-scm.o
+
+wconsd.exe: wconsd.o $(MODULES) $(LIBCLI)
 	$(CC) -o $@ $^ -lws2_32
 
 portenum.exe: portenum.c
@@ -30,3 +35,5 @@ wconsd: wconsd.c
 wine: wconsd
 	/usr/lib/wine/wine.bin wconsd.exe.so -p 9600
 
+clean:
+	rm -f *.o wconsd.exe portenum.exe
