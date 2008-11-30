@@ -356,6 +356,13 @@ int wconsd_init(int argc, char **argv) {
 	WSADATA wsaData;
 	int err;
 
+	/* setup the libcli early so that modules can use it */
+	if (!(cli = cli_init())) {
+		dprintf(1,"wconsd: wconsd_init: failed run cli_init\n");
+		return 13;
+	}
+	modules_init(cli);
+
 	/* do_getopt(GETOPT_SCMINIT,argc,argv) */
 
 	/* Start up sockets */
@@ -447,10 +454,6 @@ int wconsd_init(int argc, char **argv) {
 		return 12;
 	}
 
-	if (!(cli = cli_init())) {
-		dprintf(1,"wconsd: wconsd_init: failed run cli_init\n");
-		return 13;
-	}
 	cli_set_banner(cli, "wconsd serial to telnet");
 	cli_set_hostname(cli, (char *)hostname);
 	cli_set_idle_timeout(cli, 60);
@@ -460,8 +463,6 @@ int wconsd_init(int argc, char **argv) {
 	cli_set_auth_callback(cli, check_auth);
 	cli_set_enable_callback(cli, check_enable);
 #endif
-
-	modules_init(cli);
 
 	return 0;
 }
