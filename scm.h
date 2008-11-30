@@ -7,13 +7,13 @@
 struct SCM_def {
 	char *name;
 	char *desc;
-	int mode;	/* set to SVC_CONSOLE by the *-scm.c code */
-	int (*init)(int, char **);
-	int (*main)(int);
-	int (*stop)(int);
+	int mode;			/* set to SVC_CONSOLE by the *-scm.c code */
+	int (*init)(int, char **);	/* called before main */
+	int (*main)(int);		/* called to run the service */
+	int (*stop)(int);		/* called by scm to tell the service to stop */
 };
 
-int SCM_Start(struct SCM_def *);
+int SCM_Start(struct SCM_def *, int argc, char **argv);
 char *SCM_Install(struct SCM_def *);
 int SCM_Remove(struct SCM_def *);
 

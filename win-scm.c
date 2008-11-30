@@ -90,20 +90,20 @@ VOID WINAPI ServiceMain(DWORD argc, LPSTR *argv)
 	return;
 }
 
-int SCM_Start_Console(const int argc, const char **argv) {
+int SCM_Start_Console(int argc, char **argv) {
 
 	global_sd->mode=SVC_CONSOLE;
-	int err = sd->init(argc,argv);
+	int err = global_sd->init(argc,argv);
 	if (err!=0) {
 		printf("SCM_Start_Console: init failed, return code %d\n",err);
 		return SVC_FAIL;
 	}
 
-	sd->main(0);
+	global_sd->main(0);
 	return SVC_OK;
 }
 
-int SCM_Start(struct SCM_def *sd, const int argc, const char **argv) {
+int SCM_Start(struct SCM_def *sd, int argc, char **argv) {
 	SERVICE_TABLE_ENTRY ServiceTable[] = {
 		{ "", ServiceMain },
 		{ NULL, NULL }
@@ -114,7 +114,7 @@ int SCM_Start(struct SCM_def *sd, const int argc, const char **argv) {
 	/* If we have commandline args, then we cannot have been started
 	 * by the Windows SCM
 	 */
-	if (argc<2) {
+	if (argc>1) {
 		return SCM_Start_Console(argc,argv);
 	}
 

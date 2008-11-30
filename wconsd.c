@@ -112,13 +112,17 @@ int wconsd_init(int argc, char **argv);
 int wconsd_main(int param1);
 int wconsd_stop(int param1);
 struct SCM_def sd = {
-	"wconsd","wconsd - Telnet to Serial server",
-	wconsd_init, wconsd_main, wconsd_stop
+	.name = "wconsd",
+	.desc = "wconsd - Telnet to Serial server",
+	.init = wconsd_init,
+	.main = wconsd_main,
+	.stop = wconsd_stop,
 };
 
 /* 
  * output from OutputDebugStringA can be seen using sysinternals debugview
  * http://technet.microsoft.com/en-us/sysinternals/bb896647.aspx
+ * http://live.sysinternals.com/Dbgview.exe
  */
 
 /*
@@ -353,7 +357,7 @@ int wconsd_init(int argc, char **argv) {
 	WSADATA wsaData;
 	int err;
 
-	if (sd->mode==SVC_CONSOLE) {
+	if (sd.mode==SVC_CONSOLE) {
 		/* We are running in a command-line mode */
 		dprintf_to_stdout=1;
 
