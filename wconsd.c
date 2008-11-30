@@ -1375,8 +1375,6 @@ int wconsd_main(int param1)
 
 int main(int argc, char **argv)
 {
-	DWORD err;
-
 	// debug info for when I test this as a service
 	dprintf(1,"wconsd: started with argc==%i\n",argc);
 
@@ -1385,8 +1383,7 @@ int main(int argc, char **argv)
 		// assume that our messages are going to the debug log
 		debug_mode=0;
 
-		err = SCM_Start(&sd);
-		if (err!=SVC_CONSOLE) {
+		if (SCM_Start(&sd)!=SVC_CONSOLE) {
 			return 0;
 		}
 
@@ -1401,18 +1398,16 @@ int main(int argc, char **argv)
 	dprintf(1,
 		"        (see http://wob.zot.org/2/wiki/wconsd for more info)\n\n");
 
-	/* we have decided to run as a console app.. */
-	if (do_getopt(GETOPT_INIT,argc,argv)) {
-		int r;
-		dprintf(1,"wconsd: Foreground mode\n");
-
-		r=wconsd_init(0,NULL);
-		if (r!=0) {
-			dprintf(1,"wconsd: wconsd_init failed, return code %d\n",r);
-			return 1;
-		}
-		wconsd_main(0);
+	/* we are running as a console app so simulate the SCM */
+	/* TODO - this could all be done inside the *-scm.c code */
+	int r=wconsd_init(argc,argv);
+	if (r!=0) {
+		dprintf(1,"wconsd: wconsd_init failed, return code %d\n",r);
+		return 1;
 	}
+
+	dprintf(1,"wconsd: Foreground mode\n");
+	wconsd_main(0);
 
 	return 0;
 }
