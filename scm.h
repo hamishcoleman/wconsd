@@ -5,8 +5,8 @@
  */
 
 struct SCM_def {
-	unsigned char *name;
-	unsigned char *desc;
+	char *name;
+	char *desc;
 	int (*init)(int, char **);
 	int (*main)(int);
 	int (*stop)(int);

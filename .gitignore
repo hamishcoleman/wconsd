@@ -6,9 +6,8 @@
 wconsd.exe
 portenum.exe
 
-# Ignore the partial objects
-wconsd.o
-win-scm.o
+# Ignore the object files
+*.o
 
 # Also ignore any binaries from the wine build
 wconsd.exe.so
