@@ -29,6 +29,7 @@
 #include <winsvc.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <getopt.h>
 
 #include "scm.h"
 
@@ -257,6 +258,80 @@ void close_serial_connection(struct connection *conn) {
 	conn->serialThread=NULL;
 }
 
+static void usage(const char *name, struct option *option)
+{
+	printf("Usage: %s [-i pathname | -r | -d | -p port ]\n",name);
+	printf("Just start with no options to start server\n");
+	printf("   -i              install service 'wconsd'\n");
+	printf("   -r              remove service 'wconsd'\n");
+	printf("   -d              run wconsd in foreground mode\n");
+	printf("   -p port         listen on the given port in foreground mode\n");
+
+	printf("\n");
+	while(option->name) {
+		printf("--%s%s ",option->name,option->has_arg?"=VAL":"");
+		option++;
+	}
+	printf("\n\n");
+
+}
+
+#define GETOPT_INIT	1
+#define	GETOPT_SCMINIT	2
+
+static int do_getopt(const int whence, const int argc, char **argv) {
+	static struct option long_options[] = {
+		{"install", 0, 0, 'i'},
+		{"remove", 0, 0, 'r'},
+		{"debug", 2, 0, 'd'},
+		{"port", 1, 0, 'p'},
+		{0,0,0,0}
+	};
+
+	while(1) {
+		int c = getopt_long(argc,argv, "ird::p:",
+			long_options,NULL);
+		if (c==-1)
+			break;
+
+		switch(c) {
+			case 'i': {
+				/* request service installation */
+				char *path = SCM_Install(&sd);
+				if (!path) {
+					printf("Service installation failed\n");
+					return 1;
+				}
+				printf("Service '%s' installed, binary path '%s'\n",sd.name,path);
+				printf("You should now start the service using the service manager.\n");
+				return 0;
+			}
+			case 'r':
+				// request service removal
+				if (SCM_Remove(&sd)==0) {
+					printf("Deleted service '%s'\n",sd.name);
+				} else {
+					printf("Service removal failed\n");
+				}
+				return 0;
+			case 'd':
+				if (optarg) {
+					dprintf_level = atoi(optarg);
+				}
+				break;
+			case 'p':
+				if (optarg) {
+					default_tcpport = atoi(optarg);
+				}
+				break;
+			default:
+				usage("wconsd",long_options);
+				exit(EXIT_FAILURE);
+		}
+	}
+	return 1;
+}
+
 int wconsd_stop(int param1) {
 	SetEvent(stopEvent);
 	return 0;
@@ -280,6 +355,8 @@ int wconsd_init(int argc, char **argv) {
 	WORD wVersionRequested;
 	WSADATA wsaData;
 	int err;
+
+	/* do_getopt(GETOPT_SCMINIT,argc,argv) */
 
 	/* Start up sockets */
 	wVersionRequested = MAKEWORD( 2, 2 );
@@ -1295,20 +1372,9 @@ int wconsd_main(int param1)
 	return 0;
 }
 
-static void usage(void)
-{
-	printf("Usage: wconsd [-i pathname | -r | -d | -p port ]\n");
-	printf("Just start with no options to start server\n");
-	printf("   -i              install service 'wconsd'\n");
-	printf("   -r              remove service 'wconsd'\n");
-	printf("   -d              run wconsd in foreground mode\n");
-	printf("   -p port         listen on the given port in foreground mode\n");
-}
-
 int main(int argc, char **argv)
 {
 	DWORD err;
-	int console_application=0;
 
 	// debug info for when I test this as a service
 	dprintf(1,"wconsd: started with argc==%i\n",argc);
@@ -1324,7 +1390,6 @@ int main(int argc, char **argv)
 		}
 
 		// fall through and try running as a command-line application
-		console_application=1;
 	}
 
 	// We are running in debug mode (or any other command-line mode)
@@ -1335,48 +1400,12 @@ int main(int argc, char **argv)
 	dprintf(1,
 		"        (see http://wob.zot.org/2/wiki/wconsd for more info)\n\n");
 
-	if (argc>1) {
-		if (strcmp(argv[1],"-i")==0) {
-			/* request service installation */
-			char *path = SCM_Install(&sd);
-			if (!path) {
-				printf("Service installation failed\n");
-				return 1;
-			}
-			printf("Service '%s' installed, binary path '%s'\n",sd.name,path);
-			printf("You should now start the service using the service manager.\n");
-			return 0;
-		} else if (strcmp(argv[1],"-r")==0) {
-			// request service removal
-			if (SCM_Remove(&sd)==0) {
-				printf("Deleted service '%s'\n",sd.name);
-			} else {
-				printf("Service removal failed\n");
-				return 1;
-			}
-			return 0;
-		} else if (strcmp(argv[1],"-p")==0) {
-			console_application=1;
-			if (argc>2) {
-				default_tcpport = atoi(argv[2]);
-			}
-		} else if (strcmp(argv[1],"-d")==0) {
-			console_application=1;
-			if (argc>2) {
-				dprintf_level = atoi(argv[2]);
-			}
-		} else {
-			usage();
-			return 1;
-		}
-	}
-
-	// if we have decided to run as a console app..
-	if (console_application) {
+	/* we have decided to run as a console app.. */
+	if (do_getopt(GETOPT_INIT,argc,argv)) {
 		int r;
 		dprintf(1,"wconsd: Foreground mode\n");
 
-		r=wconsd_init(argc,argv);
+		r=wconsd_init(0,NULL);
 		if (r!=0) {
 			dprintf(1,"wconsd: wconsd_init failed, return code %d\n",r);
 			return 1;
