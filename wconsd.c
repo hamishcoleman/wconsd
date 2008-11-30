@@ -384,7 +384,7 @@ int wconsd_init(int argc, char **argv) {
 	cli_set_enable_callback(cli, check_enable);
 #endif
 
-
+	modules_init(cli);
 
 	return 0;
 }
