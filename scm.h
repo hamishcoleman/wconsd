@@ -7,6 +7,7 @@
 struct SCM_def {
 	char *name;
 	char *desc;
+	int mode;	/* set to SVC_CONSOLE by the *-scm.c code */
 	int (*init)(int, char **);
 	int (*main)(int);
 	int (*stop)(int);

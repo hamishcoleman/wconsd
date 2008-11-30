@@ -353,6 +353,18 @@ int wconsd_init(int argc, char **argv) {
 	WSADATA wsaData;
 	int err;
 
+	if (sd->mode==SVC_CONSOLE) {
+		/* We are running in a command-line mode */
+		dprintf_to_stdout=1;
+
+		dprintf(1,"\n"
+			"wconsd: Serial Console server (version %s)\n",VERSION);
+		dprintf(1,
+			"        (see http://wob.zot.org/2/wiki/wconsd for more info)\n\n");
+
+		dprintf(1,"wconsd: Foreground mode\n");
+	}
+
 	/* setup the libcli early so that modules can use it */
 	if (!(cli = cli_init())) {
 		dprintf(1,"wconsd: wconsd_init: failed run cli_init\n");
@@ -1376,36 +1388,13 @@ int main(int argc, char **argv)
 	// debug info for when I test this as a service
 	dprintf(1,"wconsd: started with argc==%i\n",argc);
 
-	if (argc==1 || argc==0) {
+	/* assume that our messages are going to the debug log */
+	dprintf_to_stdout=0;
 
-		// assume that our messages are going to the debug log
-		dprintf_to_stdout=0;
-
-		if (SCM_Start(&sd)!=SVC_CONSOLE) {
-			return 0;
-		}
-
-		// fall through and try running as a command-line application
-	}
-
-	// We are running in debug mode (or any other command-line mode)
-	dprintf_to_stdout=1;
-
-	dprintf(1,"\n"
-		"wconsd: Serial Console server (version %s)\n",VERSION);
-	dprintf(1,
-		"        (see http://wob.zot.org/2/wiki/wconsd for more info)\n\n");
-
-	/* we are running as a console app so simulate the SCM */
-	/* TODO - this could all be done inside the *-scm.c code */
-	int r=wconsd_init(argc,argv);
-	if (r!=0) {
-		dprintf(1,"wconsd: wconsd_init failed, return code %d\n",r);
+	if (SCM_Start(&sd,argc,argv)!=SVC_OK) {
+		dprintf(1,"Service startup failed\n");
 		return 1;
 	}
-
-	dprintf(1,"wconsd: Foreground mode\n");
-	wconsd_main(0);
 
 	return 0;
 }

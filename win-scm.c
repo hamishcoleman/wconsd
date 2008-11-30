@@ -70,6 +70,7 @@ VOID WINAPI ServiceMain(DWORD argc, LPSTR *argv)
 	svcStatus.dwCurrentState = SERVICE_START_PENDING;
 	SetServiceStatus( svcHandle, &svcStatus );
 
+	sd->mode=SVC_OK;
 	if ((err=sd->init(argc,argv))!=0) {
 		svcStatus.dwCurrentState = SERVICE_STOPPED;
 		svcStatus.dwWin32ExitCode = err;
@@ -89,7 +90,20 @@ VOID WINAPI ServiceMain(DWORD argc, LPSTR *argv)
 	return;
 }
 
-int SCM_Start(struct SCM_def *sd) {
+int SCM_Start_Console(const int argc, const char **argv) {
+
+	global_sd->mode=SVC_CONSOLE;
+	int err = sd->init(argc,argv);
+	if (err!=0) {
+		printf("SCM_Start_Console: init failed, return code %d\n",err);
+		return SVC_FAIL;
+	}
+
+	sd->main(0);
+	return SVC_OK;
+}
+
+int SCM_Start(struct SCM_def *sd, const int argc, const char **argv) {
 	SERVICE_TABLE_ENTRY ServiceTable[] = {
 		{ "", ServiceMain },
 		{ NULL, NULL }
@@ -97,13 +111,19 @@ int SCM_Start(struct SCM_def *sd) {
 
 	global_sd = sd;
 
+	/* If we have commandline args, then we cannot have been started
+	 * by the Windows SCM
+	 */
+	if (argc<2) {
+		return SCM_Start_Console(argc,argv);
+	}
+
 	/* try to run as a service */
 	if (StartServiceCtrlDispatcher(ServiceTable)==0) {
 		int err = GetLastError();
 
 		if (err == ERROR_FAILED_SERVICE_CONTROLLER_CONNECT) {
-			/* TODO - could run the console service from here */
-			return SVC_CONSOLE;
+			return SCM_Start_Console(argc,argv);
 		}
 
 		/* any other error, assume fatal */
