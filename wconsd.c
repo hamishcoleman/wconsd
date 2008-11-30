@@ -276,10 +276,7 @@ static void usage(const char *name, struct option *option)
 
 }
 
-#define GETOPT_INIT	1
-#define	GETOPT_SCMINIT	2
-
-static int do_getopt(const int whence, const int argc, char **argv) {
+static int do_getopt(const int argc, char **argv) {
 	static struct option long_options[] = {
 		{"install", 0, 0, 'i'},
 		{"remove", 0, 0, 'r'},
@@ -363,7 +360,8 @@ int wconsd_init(int argc, char **argv) {
 	}
 	modules_init(cli);
 
-	/* do_getopt(GETOPT_SCMINIT,argc,argv) */
+	/* handle commandline options */
+	do_getopt(argc,argv);
 
 	/* Start up sockets */
 	wVersionRequested = MAKEWORD( 2, 2 );
