@@ -35,6 +35,8 @@
 
 #include "libcli/libcli.h"
 
+#include "module.h"
+
 #define VERSION "0.2.6"
 
 /* Size of buffers for send and receive */
@@ -262,6 +264,132 @@ void close_serial_connection(struct connection *conn) {
 	conn->serialThread=NULL;
 }
 
+/* show the config for this module */
+static int this_showrun(struct cli_def *cli) {
+        cli_print(cli, "debug level %i",dprintf_level);
+        cli_print(cli, "listen port %i",default_tcpport);
+        return CLI_OK;
+}
+
+/* NOTE: this function is replicated in show_status */
+static int cmd_showport(struct cli_def *cli, char *command, char *argv[], int argc) {
+
+	cli_print(cli, "status:");
+	cli_print(cli, "  port=%d  speed=%d  data=%d  parity=%d  stop=%d",
+			com_port, com_speed, com_data, com_parity, com_stop);
+
+	/* FIXME - need to associate a connection object with a cli object */
+#if 0
+	if(conn->serialconnected) {
+		cli_print(cli, "  state=open");
+	} else {
+		cli_print(cli, "  state=closed");
+	}
+	cli_print(cli," ");
+	cli_print(cli,"  connectionid=%i  hostname=%s",conn->id,hostname);
+	cli_print(cli,"  echo=%i  binary=%i  keepalive=%i",
+		conn->option_echo,conn->option_binary,conn->option_keepalive);
+#endif
+	cli_print(cli," ");
+	return CLI_OK;
+}
+
+static int cmd_debuglevel(struct cli_def *cli, char *command, char *argv[], int argc) {
+	cli_print(cli,"Current dprintf_level=%i",dprintf_level);
+	return CLI_OK;
+}
+
+static int cmd_cdebuglevel(struct cli_def *cli, char *command, char *argv[], int argc) {
+	dprintf_level = atoi(argv[0]);
+	return CLI_OK;
+}
+
+static int cmd_cidle(struct cli_def *cli, char *command, char *argv[], int argc) {
+	cli_set_idle_timeout(cli, atoi(argv[0]));
+	return CLI_OK;
+}
+
+static int cmd_conntable(struct cli_def *cli, char *command, char *argv[], int argc) {
+	int i;
+	cli_print(cli,
+		"Flags: A - Active Slot, S - Serial active,");
+	cli_print(cli,
+		"       M - Run Menu, B - Binary transmission, E - Echo enabled,");
+	cli_print(cli,
+		"       K - Telnet Keepalives, * - This connection");
+	cli_print(cli," ");
+	cli_print(cli, "s flags  id mThr net  serial serialTh netrx nettx peer address");
+	cli_print(cli, "- ------ -- ---- ---- ------ -------- ----- ----- ------------");
+	for (i=0;i<MAXCONNECTIONS;i++) {
+		cli_print(cli,"%i%c%c%c%c%c%c%c %2i %4i %4i %6i %8i %5i %5i %s:%i",
+			i,
+			' ',
+			connection[i].active?'A':' ',
+			connection[i].serialconnected?'S':' ',
+			connection[i].option_runmenu?'M':' ',
+			connection[i].option_binary?'B':' ',
+			connection[i].option_echo?'E':' ',
+			connection[i].option_keepalive?'K':' ',
+			connection[i].id,
+
+			connection[i].menuThread,
+			connection[i].net,
+
+			connection[i].serial,
+			connection[i].serialThread,
+			connection[i].net_bytes_rx,
+			connection[i].net_bytes_tx,
+			/* FIXME - IPv4 Specific */
+			connection[i].sa?inet_ntoa(((struct sockaddr_in*)connection[i].sa)->sin_addr):"",
+			connection[i].sa?htons(((struct sockaddr_in*)connection[i].sa)->sin_port):0
+		);
+	}
+	return CLI_OK;
+}
+
+/* Our local module definition */
+static struct module_def this_module = {
+	.name = "wconsd",
+	.desc = "Main wconsd program",
+	.showrun = this_showrun,
+};
+
+/*
+ * Go through the available modules and initialise them all, causing
+ * them to register their resources
+ *
+ * TODO - decide if we want to get silly and use a magic initialiser list here
+ */
+static void initialise_all_modules(struct cli_def *cli) {
+	modules_init(cli);	/* done first, to register the parents */
+
+	/*
+	 * register stuff from the main program
+	 * TODO - move appropriate things into modules
+	 */
+
+	cli_register_command(cli, lookup_parent("show"), "connection table", cmd_conntable,
+		PRIVILEGE_UNPRIVILEGED, MODE_EXEC, "Connection Table");
+
+	cli_register_command(cli, lookup_parent("show"), "port", cmd_showport,
+		PRIVILEGE_UNPRIVILEGED, MODE_EXEC, "Default serial configuration");
+
+	cli_register_command(cli, lookup_parent("debug"), "level", cmd_debuglevel,
+		PRIVILEGE_PRIVILEGED, MODE_EXEC, "Logging output level");
+
+	register_parent("config debug",
+		cli_register_command(cli, NULL, "debug", NULL, PRIVILEGE_PRIVILEGED,
+		MODE_CONFIG, "Debug Options"));
+
+	cli_register_command(cli, lookup_parent("config debug"), "level", cmd_cdebuglevel,
+		PRIVILEGE_PRIVILEGED, MODE_CONFIG, "Logging output level");
+
+	cli_register_command(cli, NULL, "idle", cmd_cidle,
+		PRIVILEGE_PRIVILEGED, MODE_CONFIG, "idle timeout");
+
+	register_module(&this_module);
+}
+
 static void usage(const char *name, struct option *option)
 {
 	printf("Usage: %s [-i pathname | -r | -d | -p port ]\n",name);
@@ -374,7 +502,7 @@ int wconsd_init(int argc, char **argv) {
 		dprintf(1,"wconsd: wconsd_init: failed run cli_init\n");
 		return 13;
 	}
-	modules_init(cli);
+	initialise_all_modules(cli);
 
 	/* handle commandline options */
 	if (do_getopt(argc,argv)) {
@@ -888,6 +1016,7 @@ void send_help(struct connection *conn) {
 		"\r\n");
 }
 
+/* NOTE: this function is replicated in cmd_showport */
 void show_status(struct connection* conn) {
 	/* print the status to the net connection */
 
