@@ -71,6 +71,7 @@ VOID WINAPI ServiceMain(DWORD argc, LPSTR *argv)
 	SetServiceStatus( svcHandle, &svcStatus );
 
 	sd->mode=SVC_OK;
+	/* TODO - use either saved cmdline args or scm args here */
 	if ((err=sd->init(argc,argv))!=0) {
 		svcStatus.dwCurrentState = SERVICE_STOPPED;
 		svcStatus.dwWin32ExitCode = err;
@@ -90,15 +91,15 @@ VOID WINAPI ServiceMain(DWORD argc, LPSTR *argv)
 	return;
 }
 
-int SCM_Start_Console(int argc, char **argv) {
+int SCM_Start_Console(struct SCM_def *sd) {
 
-	global_sd->mode=SVC_CONSOLE;
-	int err = global_sd->init(argc,argv);
+	sd->mode=SVC_CONSOLE;
+	int err = sd->init(sd->argc,sd->argv);
 	if (err!=0) {
 		return SVC_FAIL;
 	}
 
-	global_sd->main(0);
+	sd->main(0);
 	return SVC_OK;
 }
 
@@ -108,21 +109,28 @@ int SCM_Start(struct SCM_def *sd, int argc, char **argv) {
 		{ NULL, NULL }
 	};
 
+	/* save the cmdline for possible use later */
+	sd->argc=argc;
+	sd->argv=argv;
+
 	global_sd = sd;
 
+#if 0
+	/* turns out to be untrue! */
 	/* If we have commandline args, then we cannot have been started
 	 * by the Windows SCM
 	 */
 	if (argc>1) {
-		return SCM_Start_Console(argc,argv);
+		return SCM_Start_Console(sd);
 	}
+#endif
 
 	/* try to run as a service */
 	if (StartServiceCtrlDispatcher(ServiceTable)==0) {
 		int err = GetLastError();
 
 		if (err == ERROR_FAILED_SERVICE_CONTROLLER_CONNECT) {
-			return SCM_Start_Console(argc,argv);
+			return SCM_Start_Console(sd);
 		}
 
 		/* any other error, assume fatal */
@@ -132,7 +140,7 @@ int SCM_Start(struct SCM_def *sd, int argc, char **argv) {
 	return SVC_OK;
 }
 
-char *SCM_Install(struct SCM_def *sd) {
+char *SCM_Install(struct SCM_def *sd, char *args) {
 	SC_HANDLE schSCManager, schService;
 
 	static char path[MAX_PATH];
@@ -140,6 +148,24 @@ char *SCM_Install(struct SCM_def *sd) {
 	if( !GetModuleFileName( NULL, path, MAX_PATH ) ) {
 		printf("GetModuleFileName failed %d\n", GetLastError());
 		return NULL;
+	}
+
+	/*
+	 * Note - the above path calculation does not work for paths containing
+	 * spaces.  This is because Windows is stupid, mosttly due to bad
+	 * design - see the next below.
+	 */
+
+	static char cmdline[MAX_PATH+10];
+	if (args) {
+		/*
+		 * The "BinaryPathName" can also have cmdline params
+		 * embedded into it.  Stupid windows
+		 */
+
+		snprintf(cmdline,sizeof(cmdline),"\"%s\" %s",path,args);
+	} else {
+		snprintf(cmdline,sizeof(cmdline),"\"%s\"",path);
 	}
 
 	schSCManager = OpenSCManager(NULL, NULL, SC_MANAGER_ALL_ACCESS);
@@ -152,7 +178,7 @@ char *SCM_Install(struct SCM_def *sd) {
 		SERVICE_WIN32_OWN_PROCESS,
 		SERVICE_AUTO_START,
 		SERVICE_ERROR_NORMAL,
-		path,
+		cmdline,
 		NULL, NULL, NULL, NULL, NULL);
 
 	if (schService == NULL) {

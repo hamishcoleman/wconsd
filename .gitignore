@@ -5,6 +5,7 @@
 # Ignore the built binaries
 wconsd.exe
 portenum.exe
+svctest.exe
 
 # Ignore the object files
 *.o

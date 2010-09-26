@@ -1,5 +1,5 @@
 
-all: wconsd.exe portenum.exe
+all: wconsd.exe portenum.exe svctest.exe
 
 get:
 	pscp 192.168.1.1:s/src/wconsd/*.c ./
@@ -23,6 +23,9 @@ MODULES:=modules.o win-scm.o
 wconsd.exe: wconsd.o $(MODULES) $(LIBCLI)
 	$(CC) -o $@ $^ -lws2_32
 
+svctest.exe: svctest.o win-scm.c
+	$(CC) -o $@ $^
+
 portenum.exe: portenum.c
 	$(CC) $(CFLAGS) -o $@ portenum.c -lwinspool -lsetupapi
 
@@ -36,4 +39,4 @@ wine: wconsd
 	/usr/lib/wine/wine.bin wconsd.exe.so -p 9600
 
 clean:
-	rm -f *.o wconsd.exe portenum.exe
+	rm -f *.o wconsd.exe portenum.exe svctest.exe

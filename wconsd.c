@@ -426,7 +426,7 @@ static int do_getopt(const int argc, char **argv) {
 		switch(c) {
 			case 'i': {
 				/* request service installation */
-				char *path = SCM_Install(&sd);
+				char *path = SCM_Install(&sd,NULL);
 				if (!path) {
 					printf("Service installation failed\n");
 					return 2;
