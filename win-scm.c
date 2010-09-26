@@ -115,17 +115,32 @@ int SCM_Start(struct SCM_def *sd, int argc, char **argv) {
 
 	global_sd = sd;
 
-#if 0
-	/* turns out to be untrue! */
-	/* If we have commandline args, then we cannot have been started
-	 * by the Windows SCM
+	/*
+	 * Attempt to detect if we have been run from an interactive session.
+	 * checking the environ is still not perfect, since if the
+	 * service is set to login as  a user, it gets a USERNAME env
+	 * and if that user is currently logged in interactively, it
+	 * gets a SESSIONNAME env :-(
+	 * So, also check if there is a console window
+	 *
+	 * Other avenues of investigation:
+	 * from http://bytes.com/topic/net/answers/124885-multiple-use-exe-determine-if-running-service
+	 * - work out how System.Environment.UserInteractive works
+	 * - Check if parent process name is "services.exe"
+	 * from http://stackoverflow.com/questions/200163/am-i-running-as-a-service#200183
 	 */
-	if (argc>1) {
+        char buf[100];
+	if (getenv("USERNAME") && getenv("SESSIONNAME")
+	 && GetConsoleTitle(&buf,sizeof(buf))) {
 		return SCM_Start_Console(sd);
 	}
-#endif
 
 	/* try to run as a service */
+	/*
+	 * Note, this will eventually fail if we are not started as a service
+	 * however, it will take an noticably long time to do so, thus we
+	 * try to short circuit this delay above.
+	 */
 	if (StartServiceCtrlDispatcher(ServiceTable)==0) {
 		int err = GetLastError();
 

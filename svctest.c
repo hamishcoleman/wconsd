@@ -102,6 +102,18 @@ int svctest_init(int argc, char **argv) {
 		return 1;
 	}
 
+	char **env = environ;
+	while(*env) {
+		dprintf(1,"%s:%i: env==%s\n",__FILE__,__LINE__,*env);
+		env++;
+	}
+
+	dprintf(1,"%s:%i: getenv(USERNAME)==%s\n",__FILE__,__LINE__,getenv("USERNAME"));
+
+	char buf[100];
+	int res = GetConsoleTitle(&buf,sizeof(buf));
+	dprintf(1,"%s:%i: GetConsoleTitle()==%i, %s\n",__FILE__,__LINE__,
+		res,buf);
 	trace("return 0");
         return 0;
 }
