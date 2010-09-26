@@ -49,8 +49,15 @@ VOID WINAPI ServiceCtrlHandler(DWORD opcode) {
 VOID WINAPI ServiceMain(DWORD argc, LPSTR *argv)
 {
 	int err;
+	/*
+	 * TODO
+	 * - work out a race-free way to determine the correct sd ptr
+	 * - once the correct sd is known, a void* could be passed to all the
+	 *   service functions, allowing the service to know
+	 */
 	struct SCM_def *sd = global_sd;
 
+	/* TODO - use RegisterServiceCtrlHandlerEx and pass the sd to it? */
 	svcHandle = RegisterServiceCtrlHandler(sd->name,ServiceCtrlHandler);
 	if (!svcHandle) {
 		/* FIXME - use SvcReportEvent() */
