@@ -70,8 +70,17 @@ VOID WINAPI ServiceMain(DWORD argc, LPSTR *argv)
 	svcStatus.dwCurrentState = SERVICE_START_PENDING;
 	SetServiceStatus( svcHandle, &svcStatus );
 
+	/*
+	 * If there is only one SCM arg, it is just the servicename, so use
+	 * the original cmdline instead.
+	 * Otherwise, let the SCM args completely override the original ones
+	 */
+	if (argc==1) {
+		argc=sd->argc;
+		argv=sd->argv;
+	}
+
 	sd->mode=SVC_OK;
-	/* TODO - use either saved cmdline args or scm args here */
 	if ((err=sd->init(argc,argv))!=0) {
 		svcStatus.dwCurrentState = SERVICE_STOPPED;
 		svcStatus.dwWin32ExitCode = err;
