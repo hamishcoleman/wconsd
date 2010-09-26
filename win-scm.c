@@ -40,7 +40,7 @@ VOID WINAPI ServiceCtrlHandler(DWORD opcode) {
 	if (opcode == SERVICE_CONTROL_STOP) {
 		svcStatus.dwCurrentState = SERVICE_STOP_PENDING;
 		SetServiceStatus( svcHandle, &svcStatus );
-		global_sd->stop(0);
+		global_sd->stop(NULL);
 		return;
 	}
 	SetServiceStatus( svcHandle, &svcStatus );
@@ -54,7 +54,8 @@ VOID WINAPI ServiceMain(DWORD argc, LPSTR *argv)
 	svcHandle = RegisterServiceCtrlHandler(sd->name,ServiceCtrlHandler);
 	if (!svcHandle) {
 		/* FIXME - use SvcReportEvent() */
-		printf("RegisterServiceCtrlHandler failed %d\n", GetLastError());
+		printf("RegisterServiceCtrlHandler failed %u\n",
+			(unsigned int)GetLastError());
 		return;
 	}
 
@@ -81,18 +82,20 @@ VOID WINAPI ServiceMain(DWORD argc, LPSTR *argv)
 	}
 
 	sd->mode=SVC_OK;
-	if ((err=sd->init(argc,argv))!=0) {
-		svcStatus.dwCurrentState = SERVICE_STOPPED;
-		svcStatus.dwWin32ExitCode = err;
-		SetServiceStatus( svcHandle, &svcStatus );
-		return;
+	if (sd->init) {
+		if ((err=sd->init(argc,argv))!=0) {
+			svcStatus.dwCurrentState = SERVICE_STOPPED;
+			svcStatus.dwWin32ExitCode = err;
+			SetServiceStatus( svcHandle, &svcStatus );
+			return;
+		}
 	}
 
 	svcStatus.dwCurrentState = SERVICE_RUNNING;
 	svcStatus.dwWin32ExitCode = NO_ERROR;
 	SetServiceStatus( svcHandle, &svcStatus );
 
-	err=sd->main(0);
+	err=sd->main(argc,argv);
 
 	svcStatus.dwCurrentState = SERVICE_STOPPED;
 	svcStatus.dwWin32ExitCode = NO_ERROR;
@@ -103,12 +106,15 @@ VOID WINAPI ServiceMain(DWORD argc, LPSTR *argv)
 int SCM_Start_Console(struct SCM_def *sd) {
 
 	sd->mode=SVC_CONSOLE;
-	int err = sd->init(sd->argc,sd->argv);
-	if (err!=0) {
-		return SVC_FAIL;
+	int err;
+	if (sd->init) {
+		err = sd->init(sd->argc,sd->argv);
+		if (err!=0) {
+			return SVC_FAIL;
+		}
 	}
 
-	sd->main(0);
+	sd->main(sd->argc,sd->argv);
 	return SVC_OK;
 }
 
@@ -140,7 +146,7 @@ int SCM_Start(struct SCM_def *sd, int argc, char **argv) {
 	 */
         char buf[100];
 	if (getenv("USERNAME") && getenv("SESSIONNAME")
-	 && GetConsoleTitle(&buf,sizeof(buf))) {
+	 && GetConsoleTitle((LPTSTR)&buf,sizeof(buf))) {
 		return SCM_Start_Console(sd);
 	}
 
@@ -170,7 +176,8 @@ char *SCM_Install(struct SCM_def *sd, char *args) {
 	static char path[MAX_PATH];
 
 	if( !GetModuleFileName( NULL, path, MAX_PATH ) ) {
-		printf("GetModuleFileName failed %d\n", GetLastError());
+		printf("GetModuleFileName failed %u\n",
+			(unsigned int)GetLastError());
 		return NULL;
 	}
 

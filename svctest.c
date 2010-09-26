@@ -38,8 +38,8 @@ int dprintf(unsigned char severity, const char *fmt, ...) {
 	dprintf(1,"%s:%i(%s) %s\n",__FILE__,__LINE__,__FUNCTION__,s)
 
 int svctest_init(int argc, char **argv);
-int svctest_main(int param1);
-int svctest_stop(int param1);
+int svctest_main(int argc, char **argv);
+int svctest_stop(void *);
 
 struct SCM_def sd = {
         .name = "svctest",
@@ -119,7 +119,7 @@ int svctest_init(int argc, char **argv) {
 }
 
 int run = 1;
-int svctest_main(int param1) {
+int svctest_main(int argc, char **argv) {
 	while(run) {
 		1;
 		/* FIXME - sleep */
@@ -128,7 +128,7 @@ int svctest_main(int param1) {
         return 0;
 }
 
-int svctest_stop(int param1) {
+int svctest_stop(void *param1) {
 	run = 0;
 	trace("return 0");
         return 0;

@@ -111,8 +111,8 @@ struct connection connection[MAXCONNECTIONS];
 struct cli_def *cli;
 
 int wconsd_init(int argc, char **argv);
-int wconsd_main(int param1);
-int wconsd_stop(int param1);
+int wconsd_main(int argc, char **argv);
+int wconsd_stop(void *);
 struct SCM_def sd = {
 	.name = "wconsd",
 	.desc = "wconsd - Telnet to Serial server",
@@ -461,7 +461,7 @@ static int do_getopt(const int argc, char **argv) {
 	return 0;
 }
 
-int wconsd_stop(int param1) {
+int wconsd_stop(void *param1) {
 	SetEvent(stopEvent);
 	return 0;
 }
@@ -1406,7 +1406,7 @@ DWORD WINAPI thread_new_connection(LPVOID lpParam) {
 	return 0;
 }
 
-int wconsd_main(int param1)
+int wconsd_main(int argc, char **argv)
 {
 	HANDLE wait_array[2];
 	BOOL run=TRUE;
