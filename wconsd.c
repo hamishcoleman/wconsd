@@ -575,6 +575,16 @@ int wconsd_init(int argc, char **argv) {
 	sin.sin_family=AF_INET;
 	sin.sin_port=htons(default_tcpport);
 	ls=socket(AF_INET,SOCK_STREAM,0);
+/*
+ FIXME:
+you can open sockets on Windows so that they support read/write. Just create it with
+
+  fh = WSASocket (domain, type, protocol, NULL, 0, 0);
+
+
+instead of socket.
+(see http://lists.gnu.org/archive/html/qemu-devel/2010-01/msg00383.html)
+*/
 	if (ls==INVALID_SOCKET) {
 		return 9;
 	}
