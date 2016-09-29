@@ -33,7 +33,7 @@
 
 #include "scm.h"
 
-#include "libcli/libcli.h"
+#include "libcli/libcli/libcli.h"
 
 #include "module.h"
 

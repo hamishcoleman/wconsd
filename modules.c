@@ -8,7 +8,7 @@
 #include <string.h>
 #include <stdlib.h>
 
-#include "libcli/libcli.h"
+#include "libcli/libcli/libcli.h"
 #include "module.h"
 
 /* head of the list of all modules */

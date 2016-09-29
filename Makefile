@@ -11,7 +11,7 @@ CFLAGS:=-Wall
 #CC:=gcc
 CC:=i586-mingw32msvc-gcc
 
-LIBCLI:=libcli/libcli.o
+LIBCLI:=libcli/libcli/libcli.o
 
 wconsd.c: debug.h scm.h
 win-scm.c: scm.h
