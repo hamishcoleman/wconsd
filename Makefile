@@ -1,6 +1,8 @@
 
 all: wconsd.exe portenum.exe svctest.exe
 
+# These two targets were used to exchange files with a windows machine for
+# compilation and testing
 get:
 	pscp 192.168.1.1:s/src/wconsd/*.c ./
 
