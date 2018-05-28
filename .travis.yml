@@ -1,7 +1,7 @@
 language: c
 
 before_script:
-    - sudo apt -y install mingw32
+    - make build-deps
 
 script:
     - make test
