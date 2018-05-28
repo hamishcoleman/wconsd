@@ -275,7 +275,7 @@ static int this_showrun(struct cli_def *cli) {
 static int cmd_showport(struct cli_def *cli, char *command, char *argv[], int argc) {
 
 	cli_print(cli, "status:");
-	cli_print(cli, "  port=%d  speed=%d  data=%d  parity=%d  stop=%d",
+	cli_print(cli, "  port=%d  speed=%ld  data=%d  parity=%d  stop=%d",
 			com_port, com_speed, com_data, com_parity, com_stop);
 
 	/* FIXME - need to associate a connection object with a cli object */
