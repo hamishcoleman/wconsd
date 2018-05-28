@@ -111,7 +111,7 @@ int svctest_init(int argc, char **argv) {
 	dprintf(1,"%s:%i: getenv(USERNAME)==%s\n",__FILE__,__LINE__,getenv("USERNAME"));
 
 	char buf[100];
-	int res = GetConsoleTitle(&buf,sizeof(buf));
+	int res = GetConsoleTitle((LPSTR)&buf,sizeof(buf));
 	dprintf(1,"%s:%i: GetConsoleTitle()==%i, %s\n",__FILE__,__LINE__,
 		res,buf);
 	trace("return 0");
@@ -121,7 +121,6 @@ int svctest_init(int argc, char **argv) {
 int run = 1;
 int svctest_main(int argc, char **argv) {
 	while(run) {
-		1;
 		/* FIXME - sleep */
 	}
 	trace("return 0");

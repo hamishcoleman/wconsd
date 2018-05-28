@@ -28,7 +28,7 @@ http://msdn.microsoft.com/en-us/library/ms800601.aspx
 #include <setupapi.h>
 
 int enumports_level1() {
-	char *buf;
+	unsigned char *buf;
 	DWORD size=0;
 	DWORD nrports=0;
 	PORT_INFO_1 *pi1;
@@ -69,7 +69,7 @@ int enumports_level1() {
 }
 
 int enumports_level2() {
-	char *buf;
+	unsigned char *buf;
 	DWORD size=0;
 	DWORD nrports=0;
 	PORT_INFO_2 *pi2;
@@ -114,8 +114,8 @@ int enumports_level2() {
 }
 
 int m3() {
-	int bufsize;
-	char *guid;
+	long unsigned int bufsize;
+	GUID *guid;
 
 	HDEVINFO diset;
 
@@ -192,7 +192,7 @@ int qdosdev() {
 		return 1;
 	}
 
-	p=&buf;
+	p=(char *)&buf;
 	while (*p) {
 		p+=printf("%s\n",p);
 	}
