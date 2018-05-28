@@ -1,6 +1,9 @@
 
 all: wconsd.exe portenum.exe svctest.exe
 
+# Just a simple compile test
+test: all
+
 build-deps:
 	sudo apt -y install mingw-w64
 
@@ -15,6 +18,9 @@ put:
 CFLAGS:=-Wall
 #CC:=gcc
 CC:=i686-w64-mingw32-gcc
+
+# TODO
+# - should have a dependancy on the libcli submodule and autoinit
 
 LIBCLI:=libcli/libcli/libcli.o
 
@@ -34,7 +40,7 @@ svctest.exe: svctest.o win-scm.c
 portenum.exe: portenum.c
 	$(CC) $(CFLAGS) -o $@ portenum.c -lwinspool -lsetupapi
 
-test: wconsd.exe
+testrun: wconsd.exe
 	./wconsd.exe -d
 
 wconsd: wconsd.c
