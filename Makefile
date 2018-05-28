@@ -1,6 +1,9 @@
 
 all: wconsd.exe portenum.exe svctest.exe
 
+build-deps:
+	sudo apt -y install mingw-w64
+
 # These two targets were used to exchange files with a windows machine for
 # compilation and testing
 get:
@@ -11,7 +14,7 @@ put:
 
 CFLAGS:=-Wall
 #CC:=gcc
-CC:=i586-mingw32msvc-gcc
+CC:=i686-w64-mingw32-gcc
 
 LIBCLI:=libcli/libcli/libcli.o
 
